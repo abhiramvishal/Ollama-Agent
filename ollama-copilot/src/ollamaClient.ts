@@ -52,7 +52,7 @@ interface TagsResponse {
   models: OllamaModel[];
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
@@ -119,17 +119,32 @@ export class OllamaClient {
     return data.models ?? [];
   }
 
+  /** Models that support native Ollama tool calling via /api/chat tools field */
+  static TOOL_CAPABLE_MODELS = [
+    'llama3.1', 'llama3.2', 'llama3.3',
+    'qwen2.5', 'qwen2.5-coder',
+    'mistral-nemo', 'mistral-small',
+    'command-r', 'command-r-plus',
+    'firefunction-v2'
+  ];
+
+  static supportsNativeTools(modelName: string): boolean {
+    const base = modelName.split(':')[0].toLowerCase();
+    return OllamaClient.TOOL_CAPABLE_MODELS.some(m => base.includes(m));
+  }
+
   async *streamChat(
     messages: ChatMessage[],
     model: string,
-    maxTokens: number
+    maxTokens?: number
   ): AsyncGenerator<string> {
+    const tokens = maxTokens ?? this._config.get<number>('maxTokens', 2048);
     this.refreshConfig();
     const body: ChatRequest = {
       model,
       messages,
       stream: true,
-      options: { num_predict: maxTokens },
+      options: { num_predict: tokens },
     };
     const res = await fetch(`${this.endpoint}/api/chat`, {
       method: 'POST',

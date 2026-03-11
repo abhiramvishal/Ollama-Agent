@@ -1,8 +1,8 @@
 {
   "name": "ollama-copilot",
   "displayName": "Ollama Copilot",
-  "description": "Free local AI coding assistant powered by Ollama — no API key, no cloud",
-  "version": "0.1.0",
+  "description": "Local AI coding agent powered by Ollama — Claude Code-style agent mode, inline completions, plan & execute, file editing, terminal access. No cloud, no API keys.",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -25,11 +25,39 @@
       },
       {
         "command": "ollamaCopilot.fixCode",
-        "title": "Ollama: Fix Code"
+        "title": "Ollama: Fix Bugs"
       },
       {
         "command": "ollamaCopilot.generateDocs",
         "title": "Ollama: Generate Docs"
+      },
+      {
+        "command": "ollamaCopilot.reviewCode",
+        "title": "Ollama: Code Review"
+      },
+      {
+        "command": "ollamaCopilot.optimizeCode",
+        "title": "Ollama: Optimize Code"
+      },
+      {
+        "command": "ollamaCopilot.writeTests",
+        "title": "Ollama: Write Tests"
+      },
+      {
+        "command": "ollamaCopilot.addTypes",
+        "title": "Ollama: Add TypeScript Types"
+      },
+      {
+        "command": "ollamaCopilot.editFile",
+        "title": "Ollama: Edit File (Agent)"
+      },
+      {
+        "command": "ollamaCopilot.planFeature",
+        "title": "Ollama: Plan Feature (Agent)"
+      },
+      {
+        "command": "ollamaCopilot.runCommand",
+        "title": "Ollama: Run Terminal Command (Agent)"
       },
       {
         "command": "ollamaCopilot.selectModel",
@@ -66,19 +94,41 @@
           "group": "ollamaCopilot@1"
         },
         {
-          "command": "ollamaCopilot.refactorCode",
+          "command": "ollamaCopilot.fixCode",
           "when": "editorHasSelection",
           "group": "ollamaCopilot@2"
         },
         {
-          "command": "ollamaCopilot.fixCode",
+          "command": "ollamaCopilot.refactorCode",
           "when": "editorHasSelection",
           "group": "ollamaCopilot@3"
         },
         {
-          "command": "ollamaCopilot.generateDocs",
+          "command": "ollamaCopilot.reviewCode",
           "when": "editorHasSelection",
           "group": "ollamaCopilot@4"
+        },
+        {
+          "command": "ollamaCopilot.writeTests",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@5"
+        },
+        {
+          "command": "ollamaCopilot.generateDocs",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@6"
+        },
+        {
+          "command": "ollamaCopilot.editFile",
+          "when": "editorIsOpen",
+          "group": "ollamaCopilot@7"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "ollamaCopilot.editFile",
+          "when": "editorIsOpen",
+          "group": "navigation"
         }
       ]
     },
@@ -88,12 +138,17 @@
         "ollamaCopilot.endpoint": {
           "type": "string",
           "default": "http://localhost:11434",
-          "description": "Ollama API endpoint URL"
+          "description": "Ollama server endpoint URL"
         },
         "ollamaCopilot.model": {
           "type": "string",
           "default": "llama3",
-          "description": "Default model for chat and completions"
+          "description": "Model to use for chat, agent mode, and completions"
+        },
+        "ollamaCopilot.agentMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable agent mode by default (allows file editing, terminal access, and multi-step task execution)"
         },
         "ollamaCopilot.enableInlineCompletion": {
           "type": "boolean",
@@ -103,17 +158,27 @@
         "ollamaCopilot.completionDebounceMs": {
           "type": "number",
           "default": 600,
-          "description": "Debounce delay (ms) before requesting inline completion"
+          "description": "Debounce delay (ms) before requesting an inline completion"
         },
         "ollamaCopilot.maxTokens": {
           "type": "number",
-          "default": 512,
-          "description": "Maximum tokens for completions and chat responses"
+          "default": 2048,
+          "description": "Maximum tokens for chat responses (completions use a separate lower limit)"
+        },
+        "ollamaCopilot.completionMaxTokens": {
+          "type": "number",
+          "default": 256,
+          "description": "Maximum tokens for inline completions"
         },
         "ollamaCopilot.systemPrompt": {
           "type": "string",
           "default": "You are an expert coding assistant. Be concise, accurate, and helpful.",
-          "description": "System prompt for the chat assistant"
+          "description": "Custom system prompt for chat mode (agent mode uses its own system prompt)"
+        },
+        "ollamaCopilot.agentMaxIterations": {
+          "type": "number",
+          "default": 15,
+          "description": "Maximum tool-call iterations before agent stops"
         }
       }
     },
@@ -128,6 +193,23 @@
         "key": "ctrl+shift+e",
         "mac": "cmd+shift+e",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "ollamaCopilot.fixCode",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "ollamaCopilot.editFile",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
+        "when": "editorIsOpen"
+      },
+      {
+        "command": "ollamaCopilot.planFeature",
+        "key": "ctrl+shift+p",
+        "mac": "cmd+shift+p"
       }
     ]
   },
