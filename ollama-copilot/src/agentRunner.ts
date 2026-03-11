@@ -151,6 +151,7 @@ export class AgentRunner {
                         content: reflectionEngine.getReflectionBlock() +
                             '\n\nThe previous tool call failed. Review the reflection above and try again with a corrected approach.'
                     });
+                    // Do NOT increment iteration — reflection retries are bonus attempts
                     continue;
                 }
 
@@ -166,6 +167,7 @@ export class AgentRunner {
                     role: 'user',
                     content: `<tool_result tool="${toolCall.tool}" success="true">\n${result.output}\n</tool_result>\n\nContinue with the task.`
                 });
+                iteration++;
                 continue;
             }
 
@@ -174,12 +176,7 @@ export class AgentRunner {
                     const tscError = await this.runPostTaskTscCheck();
                     if (tscError) {
                         const attempt = reflectionEngine.getReflectionCount() + 1;
-                        reflectionEngine.reflect(
-                            tscError,
-                            'post_task_tsc',
-                            {},
-                            attempt
-                        );
+                        reflectionEngine.reflect(tscError, 'post_task_tsc', {}, attempt);
                         if (reflectionEngine.shouldRetry()) {
                             onStep({ type: 'reflection', content: tscError.slice(0, 400), attempt });
                             history.push({ role: 'assistant', content: fullResponse });
@@ -205,15 +202,15 @@ export class AgentRunner {
 
     private async runPostTaskTscCheck(): Promise<string | null> {
         const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) return null;
+        if (!folders?.length) { return null; }
         const root = folders[0].uri.fsPath;
         const tsconfigPath = path.join(root, 'tsconfig.json');
-        if (!fs.existsSync(tsconfigPath)) return null;
+        if (!fs.existsSync(tsconfigPath)) { return null; }
         try {
             const result = await this.tools.executeTool('run_terminal', {
                 command: 'npx tsc --noEmit 2>&1 || true'
             });
-            if (!result.success || !result.output) return null;
+            if (!result.success || !result.output) { return null; }
             const out = result.output;
             if (out.toLowerCase().includes('error ts') || out.includes('SyntaxError')) {
                 return 'TypeScript compilation failed after changes. I need to fix these errors: ' + out.slice(0, 500);

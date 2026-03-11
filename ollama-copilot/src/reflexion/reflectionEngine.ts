@@ -48,7 +48,7 @@ export class ReflectionEngine {
     ) {
       reflection =
         'The file path was wrong. I should use list_files first to confirm the exact path.';
-    } else if (err.includes('text not found') || err.includes("could not be located")) {
+    } else if (err.includes('text not found') || err.includes('could not be located')) {
       reflection =
         "The old_text didn't match exactly. I should read_file first to get the current content, then use the exact text from the file.";
     } else if (
@@ -88,7 +88,7 @@ export class ReflectionEngine {
   }
 
   getReflectionBlock(): string {
-    if (this._context.entries.length === 0) return '';
+    if (this._context.entries.length === 0) { return ''; }
     const lines: string[] = [
       '<reflexion>',
       ...this._context.entries.map(
@@ -105,7 +105,7 @@ export class ReflectionEngine {
     const cmd = command.toLowerCase();
 
     if (cmd.includes('test') || cmd.includes('jest') || cmd.includes('vitest') || cmd.includes('pytest')) {
-      if (out.includes('failed') || out.includes('fail')) return false;
+      if (out.includes('failed') || out.includes('fail')) { return false; }
       return out.includes('passed') || out.includes('✓') || out.includes('ok');
     }
 
@@ -115,7 +115,7 @@ export class ReflectionEngine {
       cmd.includes('cargo build') ||
       cmd.includes('go build')
     ) {
-      if (out.includes('error')) return false;
+      if (out.includes('error')) { return false; }
       return out.length === 0 || out.includes('successfully compiled');
     }
 
