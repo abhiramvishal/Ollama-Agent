@@ -4,11 +4,13 @@ import { OllamaClient, ChatMessage } from './ollamaClient';
 import { AgentRunner, AgentStep } from './agentRunner';
 import { AgentTools } from './tools/agentTools';
 import { renderMarkdownToHtml } from './utils';
+import type { WorkspaceIndex } from './rag/workspaceIndex';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'ollamaCopilot.chatView';
     private _view?: vscode.WebviewView;
     private _client: OllamaClient;
+    private _workspaceIndex: WorkspaceIndex;
     private _agentRunner: AgentRunner;
     private _chatHistory: ChatMessage[] = [];
     private _isAgentRunning = false;
@@ -16,10 +18,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        client: OllamaClient
+        client: OllamaClient,
+        workspaceIndex: WorkspaceIndex
     ) {
         this._client = client;
-        this._agentRunner = new AgentRunner(client);
+        this._workspaceIndex = workspaceIndex;
+        this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex));
     }
 
     resolveWebviewView(
@@ -38,11 +42,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (webviewView.visible) {
                 this._refreshModels();
                 this._checkConnection();
+                this._sendIndexStatus();
             }
         });
         setTimeout(() => {
             this._refreshModels();
             this._checkConnection();
+            this._sendIndexStatus();
         }, 500);
     }
 
@@ -95,7 +101,44 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             case 'cancelAgent':
                 this._isAgentRunning = false;
                 break;
+            case 'reindexWorkspace':
+                await this._reindexWorkspace();
+                break;
+            case 'getIndexStatus':
+                this._sendIndexStatus();
+                break;
         }
+    }
+
+    private _sendIndexStatus() {
+        if (!this._view) return;
+        const st = this._workspaceIndex.status;
+        this._view.webview.postMessage({
+            type: 'indexStatus',
+            indexing: st.chunkCount === 0 && st.lastIndexed === 0,
+            message: st.chunkCount > 0 ? `${st.chunkCount} chunks indexed` : 'Not indexed',
+            chunkCount: st.chunkCount,
+        });
+    }
+
+    private async _reindexWorkspace() {
+        if (!this._view) return;
+        this._view.webview.postMessage({ type: 'indexStatus', indexing: true, message: 'Indexing workspace...' });
+        await this._workspaceIndex.indexAll((message, fileCount) => {
+            this._view?.webview.postMessage({
+                type: 'indexStatus',
+                indexing: true,
+                message,
+                fileCount,
+            });
+        });
+        const st = this._workspaceIndex.status;
+        this._view.webview.postMessage({
+            type: 'indexStatus',
+            indexing: false,
+            message: st.chunkCount > 0 ? `${st.chunkCount} chunks indexed` : 'Not indexed',
+            chunkCount: st.chunkCount,
+        });
     }
 
     private async _handleUserMessage(
@@ -126,10 +169,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // Build full message with context
+        // RAG: inject workspace context before user message (when enabled)
         let fullMessage = processedText;
+        try {
+            const ragContext = await this._workspaceIndex.getContext(processedText);
+            if (ragContext) {
+                fullMessage = ragContext + '\n\n' + fullMessage;
+            }
+        } catch {
+            // Non-blocking; continue without RAG context
+        }
+
         if (codeContext && !fullMessage.includes(codeContext)) {
-            fullMessage = `${processedText}\n\n**Selected code:**\n\`\`\`${this._getEditorLang()}\n${codeContext}\n\`\`\``;
+            fullMessage = fullMessage + '\n\n**Selected code:**\n\`\`\`' + this._getEditorLang() + '\n' + codeContext + '\n\`\`\`';
         }
 
         // Attach @-mentioned files
@@ -388,6 +440,15 @@ body {
   color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
   padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer;
 }
+.index-bar {
+  display: flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground);
+}
+.index-status { flex: 1; }
+.index-status.indexing::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle;
+  border: 2px solid var(--vscode-focusBorder); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.index-refresh { font-size: 11px; padding: 2px 6px; }
 .mode-badge {
   font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600;
   background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
@@ -489,6 +550,10 @@ strong { font-weight: 700; } em { font-style: italic; }
   <select id="modelSelect"></select>
   <span class="mode-badge agent" id="modeBadge" title="Toggle agent/chat mode">⚡ Agent</span>
 </div>
+<div class="index-bar" id="indexBar">
+  <span class="index-status" id="indexStatus"></span>
+  <button class="btn-icon index-refresh" id="reindexBtn" title="Re-index workspace">Re-index</button>
+</div>
 <div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
 <div class="messages" id="messages">
   <div class="empty-state" id="emptyState">
@@ -546,6 +611,7 @@ const emptyState=$('emptyState');
 
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
+vscode.postMessage({type:'getIndexStatus'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 modeBadge.onclick=()=>{
@@ -562,6 +628,7 @@ $('refreshBtn').onclick=()=>{
   vscode.postMessage({type:'getModels'});
   vscode.postMessage({type:'getConnectionStatus'});
 };
+$('reindexBtn').onclick=()=>vscode.postMessage({type:'reindexWorkspace'});
 modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.value});
 stopBtn.onclick=()=>{vscode.postMessage({type:'cancelAgent'});setRunning(false);};
 
@@ -766,6 +833,15 @@ window.addEventListener('message',e=>{
     case 'planRejected': setRunning(false); break;
     case 'models': renderModels(m.models,m.current); break;
     case 'connectionStatus': statusDot.classList.toggle('connected',m.connected); break;
+    case 'indexStatus':
+      const statusEl=$('indexStatus');
+      if(statusEl){
+        statusEl.textContent=m.message||'';
+        statusEl.classList.toggle('indexing',!!m.indexing);
+        if(m.fileCount!=null) statusEl.textContent='Indexing workspace... ('+m.fileCount+' files)';
+        if(!m.indexing&&m.chunkCount!=null) statusEl.textContent=m.chunkCount+' chunks indexed';
+      }
+      break;
     case 'selectionContext':
       selText=m.text; selLang=m.lang;
       selBadge.classList.toggle('visible',!!m.text);

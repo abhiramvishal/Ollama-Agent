@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
+import type { WorkspaceIndex } from '../rag/workspaceIndex';
+import type { CodeChunk } from '../rag/codeChunker';
 
 export interface ToolResult {
     success: boolean;
@@ -84,15 +86,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             path: { type: 'string', description: 'File path to get diagnostics for (optional, all files if omitted)', required: false }
         }
+    },
+    {
+        name: 'semantic_search',
+        description: 'Semantically search the codebase for code related to a concept or query',
+        parameters: {
+            query: { type: 'string', description: 'Natural language or concept to search for', required: true },
+            top_k: { type: 'string', description: 'Maximum number of results (default 5)', required: false }
+        }
     }
 ];
 
 export class AgentTools {
     private workspaceRoot: string;
+    private workspaceIndex?: WorkspaceIndex;
 
-    constructor() {
+    constructor(workspaceIndex?: WorkspaceIndex) {
         const folders = vscode.workspace.workspaceFolders;
         this.workspaceRoot = folders ? folders[0].uri.fsPath : '';
+        this.workspaceIndex = workspaceIndex;
     }
 
     private resolvePath(relativePath: string): string {
@@ -114,6 +126,7 @@ export class AgentTools {
                 case 'search_in_files': return await this.searchInFiles(args.query, args.file_pattern);
                 case 'run_terminal': return await this.runTerminal(args.command);
                 case 'get_diagnostics': return await this.getDiagnostics(args.path);
+                case 'semantic_search': return await this.semanticSearch(args.query, args.top_k);
                 default: return { success: false, output: '', error: `Unknown tool: ${name}` };
             }
         } catch (err: any) {
@@ -308,6 +321,35 @@ export class AgentTools {
             success: true,
             output: lines.length ? lines.join('\n') : 'No diagnostics found (no errors or warnings)'
         };
+    }
+
+    private async semanticSearch(query: string, topKStr?: string): Promise<ToolResult> {
+        if (!this.workspaceIndex) {
+            return { success: false, output: '', error: 'Workspace index not available. Use Re-index Workspace first.' };
+        }
+        if (!query?.trim()) {
+            return { success: false, output: '', error: 'semantic_search requires a "query" argument.' };
+        }
+        try {
+            const topK = topKStr ? Math.max(1, parseInt(topKStr, 10) || 5) : 5;
+            const chunks: CodeChunk[] = await this.workspaceIndex.query(query, topK);
+            const lines: string[] = [];
+            for (const c of chunks) {
+                lines.push(`--- ${c.filePath} | ${c.type}: ${c.name} | lines ${c.startLine}-${c.endLine} ---`);
+                lines.push(c.content);
+                lines.push('');
+            }
+            return {
+                success: true,
+                output: lines.length ? lines.join('\n') : 'No relevant code found for that query.'
+            };
+        } catch (err) {
+            return {
+                success: false,
+                output: '',
+                error: err instanceof Error ? err.message : String(err)
+            };
+        }
     }
 
     /** Generate the system prompt block describing all tools */

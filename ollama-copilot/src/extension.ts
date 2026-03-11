@@ -2,12 +2,17 @@ import * as vscode from 'vscode';
 import { OllamaClient, KNOWN_MODELS } from './ollamaClient';
 import { OllamaCompletionProvider } from './completionProvider';
 import { ChatViewProvider } from './chatViewProvider';
+import { WorkspaceIndex } from './rag/workspaceIndex';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
+let workspaceIndex: WorkspaceIndex;
 
 export function activate(context: vscode.ExtensionContext): void {
     const client = new OllamaClient();
+    workspaceIndex = new WorkspaceIndex();
+    workspaceIndex.startWatching();
+    context.subscriptions.push({ dispose: () => workspaceIndex.dispose() });
 
     // Status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -17,7 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(statusBarItem);
 
     // Chat sidebar
-    chatProvider = new ChatViewProvider(context.extensionUri, client);
+    chatProvider = new ChatViewProvider(context.extensionUri, client, workspaceIndex);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             ChatViewProvider.viewType,
@@ -146,6 +151,29 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.reindexWorkspace', async () => {
+            try {
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: 'Ollama Copilot: Indexing workspace',
+                        cancellable: false,
+                    },
+                    async progress => {
+                        await workspaceIndex.indexAll((message, fileCount) => {
+                            progress.report({ message: fileCount != null ? `${message} (${fileCount} files)` : message });
+                        });
+                    }
+                );
+                const st = workspaceIndex.status;
+                vscode.window.showInformationMessage(`Ollama Copilot: ${st.chunkCount} chunks indexed.`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Re-index failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('ollamaCopilot.pullModel', async () => {
             const items = KNOWN_MODELS.map(m => ({
                 label: m.label,
@@ -164,6 +192,27 @@ export function activate(context: vscode.ExtensionContext): void {
             updateStatusBar(client, name);
         })
     );
+
+    // Initial workspace index (background, with progress notification)
+    const ragEnabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('ragEnabled', true);
+    if (ragEnabled && vscode.workspace.workspaceFolders?.length) {
+        void vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Window,
+                title: 'Ollama Copilot: Indexing workspace',
+                cancellable: false,
+            },
+            async progress => {
+                try {
+                    await workspaceIndex.indexAll((message, fileCount) => {
+                        progress.report({ message: fileCount != null ? `Indexing... (${fileCount} files)` : message });
+                    });
+                } catch {
+                    // Non-blocking; RAG will use BM25 or empty context
+                }
+            }
+        );
+    }
 
     // Startup health check
     client.isAvailable().then(available => {

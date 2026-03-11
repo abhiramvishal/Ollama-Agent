@@ -66,6 +66,10 @@
       {
         "command": "ollamaCopilot.pullModel",
         "title": "Ollama: Pull Model"
+      },
+      {
+        "command": "ollamaCopilot.reindexWorkspace",
+        "title": "Ollama: Re-index Workspace"
       }
     ],
     "viewsContainers": {
@@ -179,6 +183,21 @@
           "type": "number",
           "default": 15,
           "description": "Maximum tool-call iterations before agent stops"
+        },
+        "ollamaCopilot.embeddingModel": {
+          "type": "string",
+          "default": "nomic-embed-text",
+          "description": "Ollama embedding model for RAG (e.g. nomic-embed-text). If not available, keyword (BM25) fallback is used."
+        },
+        "ollamaCopilot.ragEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workspace RAG: inject relevant code context into chat from semantic search"
+        },
+        "ollamaCopilot.ragTopK": {
+          "type": "number",
+          "default": 5,
+          "description": "Number of top code chunks to inject into the prompt from RAG"
         }
       }
     },

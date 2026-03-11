@@ -54,9 +54,9 @@ export class AgentRunner {
     private tools: AgentTools;
     private client: OllamaClient;
 
-    constructor(client: OllamaClient) {
+    constructor(client: OllamaClient, tools?: AgentTools) {
         this.client = client;
-        this.tools = new AgentTools();
+        this.tools = tools ?? new AgentTools();
     }
 
     async run(options: AgentRunOptions): Promise<void> {
