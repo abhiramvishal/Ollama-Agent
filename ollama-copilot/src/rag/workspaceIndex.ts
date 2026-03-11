@@ -13,6 +13,7 @@ export type IndexProgress = (message: string, fileCount?: number) => void;
 
 export interface WorkspaceIndexStatus {
   isIndexed: boolean;
+  isIndexing: boolean;
   chunkCount: number;
   lastIndexed: number;
 }
@@ -38,6 +39,7 @@ export class WorkspaceIndex {
   get status(): WorkspaceIndexStatus {
     return {
       isIndexed: this._chunks.length > 0 && !this._indexing,
+      isIndexing: this._indexing,
       chunkCount: this._chunks.length,
       lastIndexed: this._lastIndexed,
     };
@@ -139,7 +141,6 @@ export class WorkspaceIndex {
     this._docFreq.clear();
 
     const root = folders[0].uri.fsPath;
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
     const useEmbeddings = await this._embedder.isAvailable();
 
     try {

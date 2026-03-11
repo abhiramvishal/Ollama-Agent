@@ -113,10 +113,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _sendIndexStatus() {
         if (!this._view) return;
         const st = this._workspaceIndex.status;
+        const message = st.isIndexing
+            ? 'Indexing workspace...'
+            : st.chunkCount > 0
+                ? `${st.chunkCount} chunks indexed`
+                : 'Not indexed';
         this._view.webview.postMessage({
             type: 'indexStatus',
-            indexing: st.chunkCount === 0 && st.lastIndexed === 0,
-            message: st.chunkCount > 0 ? `${st.chunkCount} chunks indexed` : 'Not indexed',
+            indexing: st.isIndexing,
+            message,
             chunkCount: st.chunkCount,
         });
     }
