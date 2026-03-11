@@ -85,7 +85,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
     if (token.isCancellationRequested) return null;
 
     const model = config.get<string>('model', 'llama3');
-    const maxTokens = config.get<number>('maxTokens', 512);
+    const maxTokens = config.get<number>('completionMaxTokens', 256);
     const languageId = document.languageId;
 
     const lineCount = document.lineCount;

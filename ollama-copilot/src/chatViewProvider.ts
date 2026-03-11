@@ -1,587 +1,805 @@
 import * as vscode from 'vscode';
-import { OllamaClient, OllamaModel, KNOWN_MODELS, KnownModel } from './ollamaClient';
+import * as path from 'path';
+import { OllamaClient, ChatMessage } from './ollamaClient';
+import { AgentRunner, AgentStep } from './agentRunner';
+import { AgentTools } from './tools/agentTools';
 import { renderMarkdownToHtml } from './utils';
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-type CodeActionType = 'explain' | 'refactor' | 'fix' | 'docs';
-
 export class ChatViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewId = 'ollamaCopilot.chatView';
-  private _view?: vscode.WebviewView;
-  private _client: OllamaClient;
-  private _chatHistory: ChatMessage[] = [];
-  private _isStreaming = false;
+    public static readonly viewType = 'ollamaCopilot.chatView';
+    private _view?: vscode.WebviewView;
+    private _client: OllamaClient;
+    private _agentRunner: AgentRunner;
+    private _chatHistory: ChatMessage[] = [];
+    private _isAgentRunning = false;
+    private _pendingPlanMessages: ChatMessage[] | null = null;
 
-  constructor(client: OllamaClient) {
-    this._client = client;
-  }
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        client: OllamaClient
+    ) {
+        this._client = client;
+        this._agentRunner = new AgentRunner(client);
+    }
 
-  resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
-  ): void {
-    this._view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [],
-    };
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((msg) => this._handleMessage(msg));
-  }
+    resolveWebviewView(
+        webviewView: vscode.WebviewView,
+        _context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken
+    ) {
+        this._view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri]
+        };
+        webviewView.webview.html = this._getHtml();
+        webviewView.webview.onDidReceiveMessage(msg => this._handleMessage(msg));
+        webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) {
+                this._refreshModels();
+                this._checkConnection();
+            }
+        });
+        setTimeout(() => {
+            this._refreshModels();
+            this._checkConnection();
+        }, 500);
+    }
 
-  private _getHtmlForWebview(webview: vscode.Webview): string {
-    const nonce = getNonce();
-    return `<!DOCTYPE html>
+    public sendToChat(userMessage: string, codeContext?: string) {
+        if (!this._view) { return; }
+        this._view.show(true);
+        setTimeout(() => {
+            this._view?.webview.postMessage({
+                type: 'injectMessage',
+                text: userMessage,
+                codeContext
+            });
+        }, 300);
+    }
+
+    private async _handleMessage(msg: any) {
+        switch (msg.type) {
+            case 'sendMessage':
+                await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
+                break;
+            case 'changeModel':
+                vscode.workspace.getConfiguration('ollamaCopilot').update('model', msg.model, true);
+                break;
+            case 'clearChat':
+                this._chatHistory = [];
+                this._pendingPlanMessages = null;
+                break;
+            case 'insertCode':
+                this._insertCodeToEditor(msg.code);
+                break;
+            case 'getModels':
+                await this._refreshModels();
+                break;
+            case 'getConnectionStatus':
+                await this._checkConnection();
+                break;
+            case 'getSelectionContext':
+                this._sendSelectionContext();
+                break;
+            case 'getWorkspaceFiles':
+                await this._sendWorkspaceFiles(msg.query);
+                break;
+            case 'confirmPlan':
+                await this._executePlan();
+                break;
+            case 'rejectPlan':
+                this._pendingPlanMessages = null;
+                this._view?.webview.postMessage({ type: 'planRejected' });
+                break;
+            case 'cancelAgent':
+                this._isAgentRunning = false;
+                break;
+        }
+    }
+
+    private async _handleUserMessage(
+        text: string,
+        codeContext?: string,
+        attachedFiles?: string[],
+        agentModeOverride?: boolean
+    ) {
+        if (this._isAgentRunning) {
+            this._view?.webview.postMessage({ type: 'error', message: 'Agent is already running. Wait or click Stop.' });
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const model = config.get<string>('model', 'llama3');
+        const systemPrompt = config.get<string>('systemPrompt', '');
+
+        // Parse slash command and determine if we should use agent mode
+        const slashMatch = text.match(/^\/(\w+)\s*(.*)/s);
+        let processedText = text;
+        const agentSlashCmds = ['plan', 'edit', 'fix', 'run', 'test', 'refactor', 'build', 'review', 'optimize', 'types'];
+        let isAgentTask = agentModeOverride ?? config.get<boolean>('agentMode', true);
+
+        if (slashMatch) {
+            processedText = this._expandSlashCommand(slashMatch[1], slashMatch[2], codeContext);
+            if (agentSlashCmds.includes(slashMatch[1])) {
+                isAgentTask = true;
+            }
+        }
+
+        // Build full message with context
+        let fullMessage = processedText;
+        if (codeContext && !fullMessage.includes(codeContext)) {
+            fullMessage = `${processedText}\n\n**Selected code:**\n\`\`\`${this._getEditorLang()}\n${codeContext}\n\`\`\``;
+        }
+
+        // Attach @-mentioned files
+        if (attachedFiles && attachedFiles.length > 0) {
+            const folders = vscode.workspace.workspaceFolders;
+            if (folders) {
+                for (const f of attachedFiles) {
+                    try {
+                        const fullPath = path.join(folders[0].uri.fsPath, f);
+                        const doc = await vscode.workspace.openTextDocument(fullPath);
+                        const content = doc.getText().slice(0, 10000);
+                        fullMessage += `\n\n**@${f}:**\n\`\`\`\n${content}\n\`\`\``;
+                    } catch { /* skip unreadable */ }
+                }
+            }
+        }
+
+        // Build messages array
+        const messages: ChatMessage[] = [];
+        if (isAgentTask) {
+            messages.push({ role: 'system', content: AgentTools.getToolsSystemPrompt() });
+        } else {
+            const sysContent = systemPrompt || 'You are an expert coding assistant. Be concise, accurate, and helpful.';
+            messages.push({ role: 'system', content: sysContent });
+        }
+        messages.push(...this._chatHistory);
+        messages.push({ role: 'user', content: fullMessage });
+
+        if (isAgentTask) {
+            await this._runAgent(messages, model, text);
+        } else {
+            await this._runChat(messages, model, text);
+        }
+    }
+
+    private _getEditorLang(): string {
+        return vscode.window.activeTextEditor?.document.languageId || '';
+    }
+
+    private async _runChat(messages: ChatMessage[], model: string, userMsg: string) {
+        this._isAgentRunning = true;
+        let fullResponse = '';
+        this._view?.webview.postMessage({ type: 'startAssistantMessage' });
+        try {
+            for await (const chunk of this._client.streamChat(messages, model)) {
+                fullResponse += chunk;
+                this._view?.webview.postMessage({ type: 'streamChunk', chunk });
+            }
+            this._view?.webview.postMessage({
+                type: 'finalizeAssistantMessage',
+                html: renderMarkdownToHtml(fullResponse)
+            });
+            this._pushHistory(userMsg, fullResponse);
+        } catch (err: any) {
+            this._view?.webview.postMessage({ type: 'error', message: err.message });
+        } finally {
+            this._isAgentRunning = false;
+        }
+    }
+
+    private async _runAgent(messages: ChatMessage[], model: string, userMsg: string) {
+        this._isAgentRunning = true;
+        this._view?.webview.postMessage({ type: 'agentStart' });
+        let fullTextResponse = '';
+        let stepCount = 0;
+
+        const onStep = (step: AgentStep) => {
+            switch (step.type) {
+                case 'thinking':
+                    this._view?.webview.postMessage({ type: 'agentThinking' });
+                    break;
+                case 'response':
+                    fullTextResponse += step.content;
+                    this._view?.webview.postMessage({ type: 'streamChunk', chunk: step.content });
+                    break;
+                case 'tool_call':
+                    stepCount++;
+                    this._view?.webview.postMessage({
+                        type: 'agentToolCall',
+                        toolName: step.toolName,
+                        toolArgs: step.toolArgs,
+                        step: stepCount
+                    });
+                    fullTextResponse = '';
+                    break;
+                case 'tool_result':
+                    this._view?.webview.postMessage({
+                        type: 'agentToolResult',
+                        toolName: step.toolName,
+                        output: step.content,
+                        success: step.success,
+                        step: stepCount
+                    });
+                    break;
+                case 'plan':
+                    this._pendingPlanMessages = messages;
+                    this._view?.webview.postMessage({
+                        type: 'agentPlan',
+                        plan: step.content,
+                        html: renderMarkdownToHtml(step.content)
+                    });
+                    break;
+                case 'done':
+                case 'error':
+                    this._view?.webview.postMessage({
+                        type: 'agentDone',
+                        html: renderMarkdownToHtml(fullTextResponse || step.content),
+                        error: step.type === 'error' ? step.content : undefined
+                    });
+                    break;
+            }
+        };
+
+        try {
+            await this._agentRunner.run({ messages, model, onStep });
+            this._pushHistory(userMsg, fullTextResponse);
+        } catch (err: any) {
+            this._view?.webview.postMessage({ type: 'error', message: err.message });
+        } finally {
+            this._isAgentRunning = false;
+        }
+    }
+
+    private async _executePlan() {
+        if (!this._pendingPlanMessages) { return; }
+        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const model = config.get<string>('model', 'llama3');
+        const messages = this._pendingPlanMessages;
+        this._pendingPlanMessages = null;
+        this._view?.webview.postMessage({ type: 'planExecuting' });
+        await this._runAgent(
+            [...messages, { role: 'user', content: 'Plan approved. Execute all steps now.' }],
+            model,
+            'Plan execution'
+        );
+    }
+
+    private _pushHistory(userMsg: string, assistantMsg: string) {
+        this._chatHistory.push({ role: 'user', content: userMsg });
+        this._chatHistory.push({ role: 'assistant', content: assistantMsg });
+        if (this._chatHistory.length > 40) {
+            this._chatHistory = this._chatHistory.slice(-40);
+        }
+    }
+
+    private _expandSlashCommand(cmd: string, rest: string, codeContext?: string): string {
+        const code = codeContext ? `\n\nCode:\n\`\`\`\n${codeContext}\n\`\`\`` : '';
+        switch (cmd) {
+            case 'explain': return `Explain this code clearly.${code}${rest ? '\n\n' + rest : ''}`;
+            case 'fix': return `Find and fix all bugs. Show corrected code with explanations.${code}${rest ? '\nContext: ' + rest : ''}`;
+            case 'refactor': return `Refactor for better readability, performance, and maintainability.${code}${rest ? '\nFocus: ' + rest : ''}`;
+            case 'test': return `Write comprehensive unit tests.${code}${rest ? '\nFramework: ' + rest : ''}`;
+            case 'docs': return `Generate thorough documentation for this code.${code}`;
+            case 'plan': return `Create a detailed step-by-step plan to: ${rest || 'implement this feature'}${code}\n\nOutput the plan inside a <plan>...</plan> block.`;
+            case 'edit': return `Make the following changes: ${rest}${code}`;
+            case 'build': return `Build this feature: ${rest}${code}. Read relevant files first, then implement.`;
+            case 'run': return `Run this command and show me the output: ${rest}`;
+            case 'review': return `Do a thorough code review. Check for bugs, security issues, performance, and style.${code}`;
+            case 'optimize': return `Optimize for performance. Identify bottlenecks and improve them.${code}`;
+            case 'types': return `Add proper TypeScript types and interfaces.${code}`;
+            default: return `/${cmd} ${rest}`;
+        }
+    }
+
+    private async _refreshModels() {
+        try {
+            const models = await this._client.listModels();
+            const config = vscode.workspace.getConfiguration('ollamaCopilot');
+            const current = config.get<string>('model', 'llama3');
+            this._view?.webview.postMessage({ type: 'models', models, current });
+        } catch {
+            this._view?.webview.postMessage({ type: 'models', models: [], current: '' });
+        }
+    }
+
+    private async _checkConnection() {
+        const ok = await this._client.isAvailable();
+        this._view?.webview.postMessage({ type: 'connectionStatus', connected: ok });
+    }
+
+    private _sendSelectionContext() {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.selection.isEmpty) {
+            this._view?.webview.postMessage({ type: 'selectionContext', text: '', lang: '' });
+            return;
+        }
+        const text = editor.document.getText(editor.selection);
+        const lang = editor.document.languageId;
+        this._view?.webview.postMessage({ type: 'selectionContext', text, lang });
+    }
+
+    private async _sendWorkspaceFiles(query: string) {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders) {
+            this._view?.webview.postMessage({ type: 'workspaceFiles', files: [] });
+            return;
+        }
+        const pattern = query ? `**/*${query}*` : '**/*';
+        const uris = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 50);
+        const files = uris.map(u => path.relative(folders[0].uri.fsPath, u.fsPath));
+        this._view?.webview.postMessage({ type: 'workspaceFiles', files });
+    }
+
+    private _insertCodeToEditor(code: string) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('No active editor to insert code into');
+            return;
+        }
+        editor.edit(eb => {
+            if (editor.selection.isEmpty) {
+                eb.insert(editor.selection.active, code);
+            } else {
+                eb.replace(editor.selection, code);
+            }
+        });
+    }
+
+    private _getHtml(): string {
+        const nonce = getNonce();
+        return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ollama Copilot</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
-      flex-shrink: 0;
-    }
-    .header-title { font-weight: 600; flex: 1; }
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--vscode-inputValidation-errorBorder);
-    }
-    .status-dot.online { background: var(--vscode-inputValidation-infoBorder); }
-    .btn-icon {
-      background: transparent;
-      border: none;
-      color: var(--vscode-foreground);
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-    }
-    .btn-icon:hover { background: var(--vscode-toolbar-hoverBackground); }
-    .model-bar {
-      padding: 6px 12px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
-    }
-    .model-bar select {
-      width: 100%;
-      padding: 6px 8px;
-      font-size: 12px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 4px;
-    }
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .msg { max-width: 95%; }
-    .msg.user { align-self: flex-end; }
-    .msg.assistant { align-self: flex-start; }
-    .msg-bubble {
-      padding: 10px 12px;
-      border-radius: 8px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .msg.user .msg-bubble {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-    }
-    .msg.assistant .msg-bubble {
-      background: var(--vscode-editor-inactiveSelectionBackground);
-      border: 1px solid var(--vscode-panel-border);
-    }
-    .msg-bubble h1, .msg-bubble h2, .msg-bubble h3 { margin: 0.5em 0; }
-    .msg-bubble ul { margin: 0.5em 0; padding-left: 1.5em; }
-    .inline-code { background: var(--vscode-textBlockQuote-background); padding: 0 4px; border-radius: 4px; }
-    .code-block {
-      margin: 8px 0;
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-    .code-block-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 4px 8px;
-      background: var(--vscode-sideBar-background);
-      font-size: 11px;
-    }
-    .code-actions { display: flex; gap: 4px; }
-    .code-btn {
-      padding: 2px 8px;
-      font-size: 11px;
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    .code-btn:hover { opacity: 0.9; }
-    .code-block pre { margin: 0; padding: 10px; overflow-x: auto; }
-    .code-block code { font-family: var(--vscode-editor-font-family); font-size: 12px; }
-    .empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      text-align: center;
-    }
-    .empty-state.hidden { display: none; }
-    .empty-icon { font-size: 48px; margin-bottom: 12px; }
-    .empty-tagline { color: var(--vscode-descriptionForeground); margin-bottom: 20px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-    .chip {
-      padding: 8px 14px;
-      border-radius: 16px;
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: 1px solid var(--vscode-button-border);
-      cursor: pointer;
-      font-size: 12px;
-    }
-    .chip:hover { background: var(--vscode-button-secondaryHoverBackground); }
-    .input-area {
-      padding: 10px 12px;
-      border-top: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
-      flex-shrink: 0;
-    }
-    .input-wrap { position: relative; }
-    .input-area textarea {
-      width: 100%;
-      min-height: 44px;
-      max-height: 120px;
-      padding: 8px 36px 8px 8px;
-      resize: none;
-      font-family: inherit;
-      font-size: inherit;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 6px;
-    }
-    .input-area textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
-    .send-btn {
-      position: absolute;
-      right: 6px;
-      bottom: 6px;
-      padding: 4px 10px;
-      font-size: 12px;
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    .send-btn:hover { opacity: 0.9; }
-    .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .selection-badge {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      margin-top: 4px;
-    }
-    .typing {
-      display: flex; gap: 4px; padding: 10px 12px; align-items: center;
-    }
-    .typing-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--vscode-foreground);
-      opacity: 0.6;
-      animation: bounce 0.6s ease-in-out infinite;
-    }
-    .typing-dot:nth-child(2) { animation-delay: 0.1s; }
-    .typing-dot:nth-child(3) { animation-delay: 0.2s; }
-    @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-  </style>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ollama Copilot</title>
+<style nonce="${nonce}">
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+.header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border);
+  flex-shrink: 0;
+}
+.header-title { font-weight: 600; font-size: 13px; flex: 1; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
+.status-dot.connected { background: #4caf50; }
+.btn-icon {
+  background: none; border: none; cursor: pointer; padding: 3px 5px;
+  color: var(--vscode-foreground); opacity: 0.7; font-size: 14px; border-radius: 4px;
+}
+.btn-icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+.model-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0;
+}
+.model-bar select {
+  flex: 1; background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
+  padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer;
+}
+.mode-badge {
+  font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600;
+  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+.mode-badge.agent { background: #7c3aed; color: #fff; }
+.messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+.messages::-webkit-scrollbar { width: 4px; }
+.messages::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 2px; }
+.empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px; padding: 20px; opacity: 0.8;
+}
+.empty-icon { font-size: 32px; }
+.empty-title { font-size: 14px; font-weight: 600; }
+.empty-sub { font-size: 11px; text-align: center; opacity: 0.7; }
+.quick-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 4px; }
+.quick-btn {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none; padding: 5px 10px; border-radius: 12px; cursor: pointer; font-size: 11px;
+}
+.quick-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.message { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.message.user { align-items: flex-end; }
+.message.assistant { align-items: flex-start; }
+.bubble {
+  padding: 8px 12px; border-radius: 12px; max-width: 94%; word-break: break-word; line-height: 1.5; font-size: 13px;
+}
+.user .bubble { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-bottom-right-radius: 3px; }
+.assistant .bubble { background: var(--vscode-editor-inactiveSelectionBackground, var(--vscode-list-hoverBackground)); border-bottom-left-radius: 3px; }
+.agent-steps { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-bottom: 6px; }
+.agent-step {
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px;
+  background: var(--vscode-list-hoverBackground); border-left: 3px solid #7c3aed;
+}
+.agent-step.success { border-left-color: #4caf50; }
+.agent-step.failure { border-left-color: #f44336; }
+.step-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.step-body { flex: 1; min-width: 0; }
+.step-title { font-weight: 600; }
+.step-detail { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: pre-wrap; word-break: break-all; margin-top: 2px; max-height: 2.4em; overflow: hidden; cursor: pointer; }
+.step-detail.expanded { max-height: 120px; overflow-y: auto; }
+.plan-block { border: 1px solid #7c3aed; border-radius: 10px; overflow: hidden; width: 100%; margin: 4px 0; }
+.plan-header { background: rgba(124,58,237,0.15); padding: 8px 12px; font-size: 12px; font-weight: 600; color: #a78bfa; }
+.plan-content { padding: 10px 12px; font-size: 12px; }
+.plan-actions { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid rgba(124,58,237,0.3); }
+.btn-approve { background: #7c3aed; color: #fff; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.btn-approve:hover { background: #6d28d9; }
+.btn-reject { background: none; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.code-block { position: relative; margin: 8px 0; }
+.code-lang { font-size: 10px; color: var(--vscode-descriptionForeground); padding: 4px 10px 0; font-family: monospace; }
+.code-block pre { background: var(--vscode-editor-background); padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); border: 1px solid var(--vscode-panel-border); white-space: pre; line-height: 1.5; }
+.code-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.2s; }
+.code-block:hover .code-actions { opacity: 1; }
+.code-actions button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.thinking { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.thinking-dots { display: flex; gap: 3px; }
+.thinking-dots span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: bounce 1.2s infinite; }
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%,80%,100% { transform:scale(0.6);opacity:0.5; } 40% { transform:scale(1);opacity:1; } }
+.sel-badge { display: none; align-items: center; gap: 4px; padding: 2px 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border-radius: 10px; font-size: 10px; margin: 0 10px 4px; }
+.sel-badge.visible { display: flex; }
+.input-area { border-top: 1px solid var(--vscode-panel-border); padding: 8px 10px; flex-shrink: 0; }
+.input-row { display: flex; align-items: flex-end; gap: 6px; background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 8px; padding: 4px 6px; }
+.input-row:focus-within { border-color: var(--vscode-focusBorder); }
+textarea { flex: 1; background: none; border: none; outline: none; resize: none; color: var(--vscode-input-foreground); font-family: inherit; font-size: 13px; line-height: 1.5; max-height: 180px; min-height: 22px; padding: 3px 2px; }
+.send-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 14px; flex-shrink: 0; height: 30px; }
+.send-btn:hover { background: var(--vscode-button-hoverBackground); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.stop-btn { background: #f44336; color: #fff; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 11px; font-weight: 600; display: none; margin: 0 10px 4px; }
+.stop-btn.visible { display: block; }
+.slash-popup, .file-popup {
+  display: none; position: absolute; bottom: 100%; left: 10px; right: 10px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3); max-height: 200px; overflow-y: auto; z-index: 100;
+}
+.slash-popup.visible, .file-popup.visible { display: block; }
+.slash-item, .file-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; }
+.slash-item:hover, .slash-item.sel, .file-item:hover, .file-item.sel { background: var(--vscode-list-hoverBackground); }
+.slash-cmd { font-weight: 700; color: #a78bfa; font-size: 13px; min-width: 80px; }
+.slash-desc { color: var(--vscode-descriptionForeground); font-size: 11px; }
+.hint { font-size: 10px; color: var(--vscode-descriptionForeground); padding: 0 10px 4px; }
+p { margin: 4px 0; } h1,h2,h3 { margin: 8px 0 4px; } ul,ol { padding-left: 18px; } li { margin: 2px 0; }
+code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+strong { font-weight: 700; } em { font-style: italic; }
+</style>
 </head>
 <body>
-  <div class="header">
-    <span class="header-emoji">🦙</span>
-    <span class="header-title">Ollama Copilot</span>
-    <span class="status-dot" id="statusDot"></span>
-    <button class="btn-icon" id="clearBtn" title="Clear chat">Clear</button>
-  </div>
-  <div class="model-bar">
-    <select id="modelSelect">
-      <option value="">Loading models...</option>
-    </select>
-  </div>
-  <div class="messages" id="messages"></div>
+<div class="header">
+  <div class="status-dot" id="statusDot"></div>
+  <span class="header-title">Ollama Copilot</span>
+  <button class="btn-icon" id="clearBtn" title="New chat">🗑</button>
+  <button class="btn-icon" id="refreshBtn" title="Refresh">↻</button>
+</div>
+<div class="model-bar">
+  <select id="modelSelect"></select>
+  <span class="mode-badge agent" id="modeBadge" title="Toggle agent/chat mode">⚡ Agent</span>
+</div>
+<div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
+<div class="messages" id="messages">
   <div class="empty-state" id="emptyState">
-    <div class="empty-icon">💬</div>
-    <div class="empty-tagline">Ask anything. Code, explain, refactor — 100% local.</div>
-    <div class="chips">
-      <button class="chip" data-prompt="explain">Explain selection</button>
-      <button class="chip" data-prompt="tests">Write unit tests</button>
-      <button class="chip" data-prompt="refactor">Refactor this</button>
-      <button class="chip" data-prompt="debug">Debug this</button>
+    <div class="empty-icon">🤖</div>
+    <div class="empty-title">Ollama Copilot</div>
+    <div class="empty-sub">Local AI · No cloud · No API keys<br>Type <strong>/</strong> for commands, <strong>@</strong> to attach files</div>
+    <div class="quick-actions">
+      <button class="quick-btn" data-cmd="/explain">Explain</button>
+      <button class="quick-btn" data-cmd="/fix">Fix bugs</button>
+      <button class="quick-btn" data-cmd="/refactor">Refactor</button>
+      <button class="quick-btn" data-cmd="/test">Write tests</button>
+      <button class="quick-btn" data-cmd="/plan ">Plan feature</button>
+      <button class="quick-btn" data-cmd="/review">Review</button>
     </div>
   </div>
-  <div class="input-area">
-    <div class="input-wrap">
-      <textarea id="input" placeholder="Message Ollama..." rows="2"></textarea>
-      <button class="send-btn" id="sendBtn">Send</button>
-    </div>
-    <div class="selection-badge" id="selectionBadge" style="display:none;">Selection will be included</div>
+</div>
+<button class="stop-btn" id="stopBtn">■ Stop agent</button>
+<div style="position:relative">
+  <div class="slash-popup" id="slashPopup"></div>
+  <div class="file-popup" id="filePopup"></div>
+</div>
+<div class="hint">/ commands · @ attach files · Enter to send · Shift+Enter newline</div>
+<div class="input-area">
+  <div class="input-row">
+    <textarea id="input" placeholder="Ask anything... or type / for commands" rows="1"></textarea>
+    <button class="send-btn" id="sendBtn">➤</button>
   </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const messagesEl = document.getElementById('messages');
-    const emptyState = document.getElementById('emptyState');
-    const input = document.getElementById('input');
-    const sendBtn = document.getElementById('sendBtn');
-    const modelSelect = document.getElementById('modelSelect');
-    const statusDot = document.getElementById('statusDot');
-    const clearBtn = document.getElementById('clearBtn');
-    const selectionBadge = document.getElementById('selectionBadge');
+</div>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+let agentMode = true, isRunning = false, selText = '', selLang = '';
+let currentBubble = null, currentStepsEl = null, attachedFiles = [];
+let slashIdx = -1, fileIdx = -1;
 
-    function addMessage(role, content, isHtml) {
-      const div = document.createElement('div');
-      div.className = 'msg ' + role;
-      const bubble = document.createElement('div');
-      bubble.className = 'msg-bubble';
-      if (isHtml) bubble.innerHTML = content;
-      else bubble.textContent = content;
-      div.appendChild(bubble);
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-      emptyState.classList.add('hidden');
-    }
+const SLASH = [
+  {cmd:'/explain',desc:'Explain selected code'},
+  {cmd:'/fix',desc:'Find and fix bugs'},
+  {cmd:'/refactor',desc:'Refactor for quality'},
+  {cmd:'/test',desc:'Write unit tests'},
+  {cmd:'/docs',desc:'Generate documentation'},
+  {cmd:'/review',desc:'Code review'},
+  {cmd:'/optimize',desc:'Optimize performance'},
+  {cmd:'/plan',desc:'Build step-by-step plan (agent)'},
+  {cmd:'/edit',desc:'Describe changes to make (agent)'},
+  {cmd:'/build',desc:'Build a new feature (agent)'},
+  {cmd:'/run',desc:'Run terminal command (agent)'},
+  {cmd:'/types',desc:'Add TypeScript types'},
+];
 
-    function showTyping() {
-      const div = document.createElement('div');
-      div.className = 'msg assistant';
-      div.id = 'typingIndicator';
-      div.innerHTML = '<div class="msg-bubble typing"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+const $=id=>document.getElementById(id);
+const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('stopBtn');
+const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
+const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
+const emptyState=$('emptyState');
 
-    function hideTyping() {
-      const el = document.getElementById('typingIndicator');
-      if (el) el.remove();
-    }
+vscode.postMessage({type:'getConnectionStatus'});
+vscode.postMessage({type:'getModels'});
+setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
-    function setStreamingBubble(content) {
-      let el = document.getElementById('streamBubble');
-      if (!el) {
-        const div = document.createElement('div');
-        div.className = 'msg assistant';
-        div.id = 'streamContainer';
-        const bubble = document.createElement('div');
-        bubble.className = 'msg-bubble';
-        bubble.id = 'streamBubble';
-        div.appendChild(bubble);
-        messagesEl.appendChild(div);
-        el = bubble;
-      }
-      el.innerHTML = content;
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+modeBadge.onclick=()=>{
+  agentMode=!agentMode;
+  modeBadge.textContent=agentMode?'⚡ Agent':'💬 Chat';
+  modeBadge.classList.toggle('agent',agentMode);
+};
+$('clearBtn').onclick=()=>{
+  vscode.postMessage({type:'clearChat'});
+  msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='flex';
+  attachedFiles=[]; currentBubble=null; currentStepsEl=null;
+};
+$('refreshBtn').onclick=()=>{
+  vscode.postMessage({type:'getModels'});
+  vscode.postMessage({type:'getConnectionStatus'});
+};
+modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.value});
+stopBtn.onclick=()=>{vscode.postMessage({type:'cancelAgent'});setRunning(false);};
 
-    function finalizeStream(content) {
-      const container = document.getElementById('streamContainer');
-      if (container) {
-        container.id = '';
-        const bubble = container.querySelector('.msg-bubble');
-        if (bubble) bubble.innerHTML = content;
-        attachCodeButtons(container);
-      }
-    }
+document.querySelectorAll('.quick-btn').forEach(b=>{
+  b.onclick=()=>{ input.value=b.dataset.cmd; autoSz(); showSlash(b.dataset.cmd); input.focus(); };
+});
 
-    function attachCodeButtons(container) {
-      if (!container) container = messagesEl;
-      container.querySelectorAll('.insert-btn').forEach(btn => {
-        btn.onclick = () => {
-          const code = btn.getAttribute('data-code');
-          if (code != null) vscode.postMessage({ type: 'insertCode', code: code });
-        };
-      });
-      container.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.onclick = () => {
-          const code = btn.getAttribute('data-code');
-          if (code != null) navigator.clipboard.writeText(code);
-        };
-      });
-    }
+input.addEventListener('input',()=>{
+  autoSz();
+  const v=input.value, c=input.selectionStart;
+  const sm=v.match(/^\\/(\\w*)$/);
+  if(sm){ const p=sm[1].toLowerCase(); const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p)); if(f.length){renderSlash(f);return;} }
+  hideSlash();
+  const am=v.slice(0,c).match(/@([^\\s]*)$/);
+  if(am){ vscode.postMessage({type:'getWorkspaceFiles',query:am[1]}); return; }
+  hideFile();
+});
 
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendBtn.click();
-      }
-    });
-
-    input.addEventListener('input', () => {
-      input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-    });
-
-    sendBtn.addEventListener('click', () => {
-      const text = input.value.trim();
-      if (!text) return;
-      vscode.postMessage({ type: 'sendMessage', text });
-      addMessage('user', text, false);
-      showTyping();
-      input.value = '';
-      input.style.height = 'auto';
-    });
-
-    clearBtn.addEventListener('click', () => vscode.postMessage({ type: 'clearChat' }));
-
-    modelSelect.addEventListener('change', () => {
-      vscode.postMessage({ type: 'changeModel', value: modelSelect.value });
-    });
-
-    document.querySelectorAll('.chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const prompt = chip.getAttribute('data-prompt');
-        const text = { explain: 'Explain the selected code.', tests: 'Write unit tests for the selected code.', refactor: 'Refactor the selected code.', debug: 'Help me debug the selected code.' }[prompt] || '';
-        if (text) {
-          input.value = text;
-          input.focus();
-        }
-      });
-    });
-
-    window.addEventListener('message', (e) => {
-      const msg = e.data;
-      switch (msg.type) {
-        case 'streamStart':
-          hideTyping();
-          break;
-        case 'streamChunk':
-          setStreamingBubble(msg.content);
-          break;
-        case 'streamEnd':
-          finalizeStream(msg.content);
-          break;
-        case 'streamError':
-          hideTyping();
-          addMessage('assistant', 'Error: ' + (msg.error || 'Unknown error'), false);
-          break;
-        case 'cleared':
-          messagesEl.innerHTML = '';
-          emptyState.classList.remove('hidden');
-          break;
-        case 'modelList':
-          modelSelect.innerHTML = '';
-          (msg.installed || []).forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.name;
-            opt.textContent = '✅ ' + m.name;
-            if (msg.current === m.name) opt.selected = true;
-            modelSelect.appendChild(opt);
-          });
-          (msg.groups || []).forEach(g => {
-            const group = document.createElement('optgroup');
-            group.label = g.label;
-            (g.models || []).forEach(m => {
-              const opt = document.createElement('option');
-              opt.value = m.name;
-              opt.textContent = m.label || m.name;
-              group.appendChild(opt);
-            });
-            if (group.childNodes.length) modelSelect.appendChild(group);
-          });
-          if (msg.current && !modelSelect.value) modelSelect.value = msg.current;
-          break;
-        case 'connectionStatus':
-          statusDot.classList.toggle('online', msg.available);
-          break;
-        case 'selectionContext':
-          selectionBadge.style.display = msg.hasSelection ? 'block' : 'none';
-          break;
-      }
-    });
-
-    vscode.postMessage({ type: 'getModels' });
-    vscode.postMessage({ type: 'getSelectionContext' });
-    vscode.postMessage({ type: 'getConnectionStatus' });
-  </script>
-</body>
-</html>`;
+input.addEventListener('keydown',e=>{
+  if(slashPopup.classList.contains('visible')){
+    const its=slashPopup.querySelectorAll('.slash-item');
+    if(e.key==='ArrowDown'){e.preventDefault();slashIdx=Math.min(slashIdx+1,its.length-1);hlSlash();return;}
+    if(e.key==='ArrowUp'){e.preventDefault();slashIdx=Math.max(slashIdx-1,0);hlSlash();return;}
+    if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();(its[Math.max(0,slashIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){hideSlash();return;}
   }
-
-  private async _handleMessage(msg: { type: string; text?: string; value?: string; code?: string }) {
-    if (!this._view) return;
-    const webview = this._view.webview;
-    switch (msg.type) {
-      case 'getModels':
-        await this._sendModelList(webview);
-        break;
-      case 'sendMessage':
-        if (msg.text) await this._handleChat(msg.text);
-        break;
-      case 'changeModel':
-        if (msg.value !== undefined) {
-          await vscode.workspace.getConfiguration('ollamaCopilot').update('model', msg.value, vscode.ConfigurationTarget.Global);
-          await this._sendModelList(webview);
-        }
-        break;
-      case 'clearChat':
-        this._chatHistory = [];
-        webview.postMessage({ type: 'cleared' });
-        break;
-      case 'insertCode':
-        if (msg.code !== undefined) {
-          const editor = vscode.window.activeTextEditor;
-          if (editor) {
-            const selection = editor.selection;
-            await editor.edit((eb) => {
-              if (selection.isEmpty) {
-                eb.insert(selection.start, msg.code!);
-              } else {
-                eb.replace(selection, msg.code!);
-              }
-            });
-          }
-        }
-        break;
-      case 'getSelectionContext':
-        this._updateSelectionBadge(webview);
-        break;
-      case 'getConnectionStatus':
-        this._client.isAvailable().then((available) => {
-          webview.postMessage({ type: 'connectionStatus', available });
-        });
-        break;
-    }
+  if(filePopup.classList.contains('visible')){
+    const its=filePopup.querySelectorAll('.file-item');
+    if(e.key==='ArrowDown'){e.preventDefault();fileIdx=Math.min(fileIdx+1,its.length-1);hlFile();return;}
+    if(e.key==='ArrowUp'){e.preventDefault();fileIdx=Math.max(fileIdx-1,0);hlFile();return;}
+    if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();(its[Math.max(0,fileIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){hideFile();return;}
   }
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
+});
 
-  private async _sendModelList(webview: vscode.Webview) {
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
-    const current = config.get<string>('model', 'llama3');
-    let installed: OllamaModel[] = [];
-    try {
-      installed = await this._client.listModels();
-    } catch {
-      // offline
-    }
-    const installedNames = new Set(installed.map((m) => m.name));
-    const groups: { label: string; models: KnownModel[] }[] = [];
-    const code = KNOWN_MODELS.filter((m) => m.category === 'code' && !installedNames.has(m.name));
-    const general = KNOWN_MODELS.filter((m) => m.category === 'general' && !installedNames.has(m.name));
-    const small = KNOWN_MODELS.filter((m) => m.category === 'small' && !installedNames.has(m.name));
-    if (code.length) groups.push({ label: '📦 Code — pull to use', models: code });
-    if (general.length) groups.push({ label: '📦 General — pull to use', models: general });
-    if (small.length) groups.push({ label: '📦 Small/Fast — pull to use', models: small });
-    webview.postMessage({
-      type: 'modelList',
-      installed: installed.map((m) => ({ name: m.name })),
-      groups,
-      current,
-    });
-  }
+function autoSz(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px';}
 
-  private _updateSelectionBadge(webview: vscode.Webview) {
-    const editor = vscode.window.activeTextEditor;
-    const hasSelection = !!(editor && !editor.selection.isEmpty);
-    webview.postMessage({ type: 'selectionContext', hasSelection });
-  }
+function showSlash(partial){
+  const p=(partial||'/').replace(/^\//,'').toLowerCase();
+  renderSlash(SLASH.filter(s=>s.cmd.slice(1).startsWith(p)));
+}
+function renderSlash(items){
+  if(!items.length){hideSlash();return;}
+  slashPopup.innerHTML=items.map((it,i)=>
+    '<div class="slash-item" data-cmd="'+it.cmd+'">' +
+    '<span class="slash-cmd">'+it.cmd+'</span>' +
+    '<span class="slash-desc">'+it.desc+'</span></div>'
+  ).join('');
+  slashPopup.querySelectorAll('.slash-item').forEach(el=>{
+    el.onclick=()=>{input.value=el.dataset.cmd+' ';hideSlash();input.focus();autoSz();};
+  });
+  slashIdx=0; hlSlash(); slashPopup.classList.add('visible');
+}
+function hideSlash(){slashPopup.classList.remove('visible');slashIdx=-1;}
+function hlSlash(){slashPopup.querySelectorAll('.slash-item').forEach((el,i)=>{el.classList.toggle('sel',i===slashIdx);if(i===slashIdx)el.scrollIntoView({block:'nearest'});});}
 
-  private async _handleChat(userText: string) {
-    if (!this._view || this._isStreaming) return;
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
-    const model = config.get<string>('model', 'llama3');
-    const maxTokens = config.get<number>('maxTokens', 512);
-    const systemPrompt = config.get<string>('systemPrompt', 'You are an expert coding assistant. Be concise, accurate, and helpful.');
-
-    let fullUserMessage = userText;
-    const editor = vscode.window.activeTextEditor;
-    if (editor && !editor.selection.isEmpty) {
-      const selection = editor.document.getText(editor.selection);
-      const lang = editor.document.languageId;
-      fullUserMessage = userText + '\n\n```' + lang + '\n' + selection + '\n```';
-    }
-
-    this._chatHistory.push({ role: 'user', content: fullUserMessage });
-    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: systemPrompt },
-      ...this._chatHistory.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    ];
-
-    this._isStreaming = true;
-    this._view.webview.postMessage({ type: 'streamStart' });
-    const chunks: string[] = [];
-    try {
-      for await (const chunk of this._client.streamChat(messages, model, maxTokens)) {
-        chunks.push(chunk);
-        const html = renderMarkdownToHtml(chunks.join(''));
-        this._view?.webview.postMessage({ type: 'streamChunk', content: html });
-      }
-      const fullContent = chunks.join('');
-      this._chatHistory.push({ role: 'assistant', content: fullContent });
-      const finalHtml = renderMarkdownToHtml(fullContent);
-      this._view?.webview.postMessage({ type: 'streamEnd', content: finalHtml });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this._view?.webview.postMessage({ type: 'streamError', error: message });
-    } finally {
-      this._isStreaming = false;
-    }
-  }
-
-  async sendCodeAction(action: CodeActionType, code: string, language: string): Promise<void> {
-    const prompts: Record<CodeActionType, string> = {
-      explain: `Explain the following code. Be concise.\n\n\`\`\`${language}\n${code}\n\`\`\``,
-      refactor: `Refactor the following code. Keep the same behavior, improve clarity and style.\n\n\`\`\`${language}\n${code}\n\`\`\``,
-      fix: `Find and fix bugs or issues in the following code.\n\n\`\`\`${language}\n${code}\n\`\`\``,
-      docs: `Write clear documentation (comments or docblocks) for the following code.\n\n\`\`\`${language}\n${code}\n\`\`\``,
+function renderFile(files){
+  if(!files.length){hideFile();return;}
+  filePopup.innerHTML=files.slice(0,20).map(f=>'<div class="file-item" data-f="'+esc(f)+'">'+esc(f)+'</div>').join('');
+  filePopup.querySelectorAll('.file-item').forEach(el=>{
+    el.onclick=()=>{
+      const v=input.value,c=input.selectionStart;
+      const b=v.slice(0,c).replace(/@([^\\s]*)$/,'@'+el.dataset.f+' ');
+      input.value=b+v.slice(c);
+      if(!attachedFiles.includes(el.dataset.f))attachedFiles.push(el.dataset.f);
+      hideFile();input.focus();autoSz();
     };
-    const text = prompts[action];
-    if (text) await this._handleChat(text);
-  }
+  });
+  fileIdx=0; hlFile(); filePopup.classList.add('visible');
+}
+function hideFile(){filePopup.classList.remove('visible');fileIdx=-1;}
+function hlFile(){filePopup.querySelectorAll('.file-item').forEach((el,i)=>el.classList.toggle('sel',i===fileIdx));}
 
-  /** Call when view becomes visible to refresh connection status and selection. */
-  refresh(): void {
-    if (!this._view) return;
-    this._client.isAvailable().then((available) => {
-      this._view?.webview.postMessage({ type: 'connectionStatus', available });
-    });
-    this._updateSelectionBadge(this._view.webview);
-  }
+function send(){
+  const text=input.value.trim();
+  if(!text||isRunning)return;
+  const code=selText||'', files=[...attachedFiles];
+  attachedFiles=[]; input.value=''; autoSz();
+  hideSlash(); hideFile();
+  vscode.postMessage({type:'sendMessage',text,codeContext:code,files,agentMode});
+}
+sendBtn.onclick=send;
+
+function setRunning(r){
+  isRunning=r; sendBtn.disabled=r;
+  stopBtn.classList.toggle('visible',r);
 }
 
-function getNonce(): string {
-  let text = '';
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
+function hideEmpty(){emptyState.style.display='none';}
+function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function addUser(text){
+  hideEmpty();
+  const d=document.createElement('div'); d.className='message user';
+  d.innerHTML='<div class="bubble">'+esc(text)+'</div>';
+  msgs.appendChild(d); scrollBot();
+}
+
+function startAssistant(){
+  hideEmpty();
+  const d=document.createElement('div'); d.className='message assistant';
+  const b=document.createElement('div'); b.className='bubble';
+  b.innerHTML='<div class="thinking"><div class="thinking-dots"><span></span><span></span><span></span></div> Thinking...</div>';
+  d.appendChild(b); msgs.appendChild(d); currentBubble=b; currentStepsEl=null; scrollBot();
+}
+
+function streamChunk(chunk){
+  if(!currentBubble)startAssistant();
+  const t=currentBubble.querySelector('.thinking'); if(t)t.remove();
+  let s=currentBubble.querySelector('.stream-raw');
+  if(!s){s=document.createElement('span');s.className='stream-raw';currentBubble.appendChild(s);}
+  s.textContent=(s.textContent||'')+chunk;
+  scrollBot();
+}
+
+function finalize(html){
+  if(!currentBubble)return;
+  currentBubble.innerHTML=html||''; attachActions(currentBubble); currentBubble=null; scrollBot();
+}
+
+function attachActions(el){
+  el.querySelectorAll('.code-block').forEach(block=>{
+    const pre=block.querySelector('pre'); if(!pre)return;
+    const cp=block.querySelector('.copy-btn'), ins=block.querySelector('.insert-btn');
+    if(cp)cp.onclick=()=>{navigator.clipboard?.writeText(pre.textContent||'');cp.textContent='Copied!';setTimeout(()=>cp.textContent='Copy',1200);};
+    if(ins)ins.onclick=()=>vscode.postMessage({type:'insertCode',code:pre.textContent||''});
+  });
+}
+
+function agentStart(){
+  setRunning(true); hideEmpty();
+  const d=document.createElement('div'); d.className='message assistant';
+  const b=document.createElement('div'); b.className='bubble';
+  d.appendChild(b); msgs.appendChild(d); currentBubble=b;
+  const steps=document.createElement('div'); steps.className='agent-steps';
+  b.appendChild(steps); currentStepsEl=steps; scrollBot();
+}
+
+function addToolCall(name,args,step){
+  if(!currentStepsEl){agentStart();}
+  const s=document.createElement('div'); s.className='agent-step'; s.id='step'+step;
+  const argsStr=args?Object.entries(args).map(([k,v])=>k+': '+String(v).slice(0,60)).join(' · '):'';
+  s.innerHTML='<span class="step-icon">⚙</span><div class="step-body"><div class="step-title">'+esc(name)+'</div>'+(argsStr?'<div class="step-detail">'+esc(argsStr)+'</div>':'')+'</div>';
+  const det=s.querySelector('.step-detail');
+  if(det)det.onclick=()=>det.classList.toggle('expanded');
+  currentStepsEl.appendChild(s); scrollBot();
+}
+
+function addToolResult(name,output,ok,step){
+  const s=document.getElementById('step'+step); if(!s)return;
+  s.classList.add(ok?'success':'failure');
+  s.querySelector('.step-icon').textContent=ok?'✓':'✗';
+  const d=document.createElement('div'); d.className='step-detail';
+  d.textContent=(output||'').slice(0,400); d.onclick=()=>d.classList.toggle('expanded');
+  s.querySelector('.step-body').appendChild(d); scrollBot();
+}
+
+function showPlan(html){
+  setRunning(false); hideEmpty();
+  const d=document.createElement('div'); d.className='message assistant';
+  const b=document.createElement('div'); b.className='bubble'; b.style.padding='4px';
+  const plan=document.createElement('div'); plan.className='plan-block';
+  plan.innerHTML='<div class="plan-header">📋 Plan — Review before executing</div><div class="plan-content">'+html+'</div><div class="plan-actions"><button class="btn-approve" id="approveBtn">▶ Execute Plan</button><button class="btn-reject" id="rejectBtn">✕ Reject</button></div>';
+  b.appendChild(plan); d.appendChild(b); msgs.appendChild(d); currentBubble=null;
+  plan.querySelector('#approveBtn').onclick=()=>{
+    plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;opacity:0.7">Executing...</em>';
+    vscode.postMessage({type:'confirmPlan'});
+  };
+  plan.querySelector('#rejectBtn').onclick=()=>{
+    plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;color:#f44336">Plan rejected.</em>';
+    vscode.postMessage({type:'rejectPlan'});
+  };
+  scrollBot();
+}
+
+window.addEventListener('message',e=>{
+  const m=e.data;
+  switch(m.type){
+    case 'userMessage': addUser(m.text); startAssistant(); setRunning(true); break;
+    case 'startAssistantMessage': startAssistant(); setRunning(true); break;
+    case 'streamChunk': streamChunk(m.chunk); break;
+    case 'finalizeAssistantMessage': finalize(m.html); setRunning(false); break;
+    case 'agentStart': agentStart(); break;
+    case 'agentThinking': break;
+    case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step); break;
+    case 'agentToolResult': addToolResult(m.toolName,m.output,m.success,m.step); break;
+    case 'agentPlan': showPlan(m.html); break;
+    case 'agentDone':
+      if(m.html&&currentBubble){
+        const r=document.createElement('div'); r.innerHTML=m.html;
+        currentBubble.appendChild(r); attachActions(r);
+      }
+      if(m.error&&currentBubble){
+        const er=document.createElement('div');
+        er.style.cssText='color:#f44336;font-size:12px;margin-top:6px;';
+        er.textContent='⚠ '+m.error; currentBubble.appendChild(er);
+      }
+      currentBubble=null; setRunning(false); scrollBot(); break;
+    case 'planExecuting': startAssistant(); setRunning(true); break;
+    case 'planRejected': setRunning(false); break;
+    case 'models': renderModels(m.models,m.current); break;
+    case 'connectionStatus': statusDot.classList.toggle('connected',m.connected); break;
+    case 'selectionContext':
+      selText=m.text; selLang=m.lang;
+      selBadge.classList.toggle('visible',!!m.text);
+      if(m.text)$('selLabel').textContent=m.text.split('\\n').length+' lines ('+m.lang+')';
+      break;
+    case 'workspaceFiles': renderFile(m.files); break;
+    case 'injectMessage': input.value=m.text; if(m.codeContext)selText=m.codeContext; autoSz(); input.focus(); break;
+    case 'error':
+      if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
+      setRunning(false); break;
   }
-  return text;
+});
+
+function renderModels(models,current){
+  modelSel.innerHTML='';
+  if(!models.length){const o=document.createElement('option');o.textContent='— No models —';modelSel.appendChild(o);return;}
+  models.forEach(m=>{
+    const o=document.createElement('option');
+    o.value=m.name;
+    const gb=(m.size/1e9).toFixed(1);
+    o.textContent=m.name+' ('+gb+'GB)';
+    if(m.name===current)o.selected=true;
+    modelSel.appendChild(o);
+  });
+}
+</script>
+</body>
+</html>`;
+    }
+}
+
+function getNonce() {
+    let text = '';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) { text += chars.charAt(Math.floor(Math.random() * chars.length)); }
+    return text;
 }
