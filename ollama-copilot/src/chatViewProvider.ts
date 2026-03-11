@@ -31,7 +31,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = workspaceIndex;
         this._memoryStore = memoryStore;
         this._skillStore = skillStore;
-        this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex, memoryStore, skillStore));
+        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const maxRetries = config.get<number>('reflexionMaxRetries', 3);
+        this._agentRunner = new AgentRunner(
+            client,
+            new AgentTools(workspaceIndex, memoryStore, skillStore),
+            maxRetries
+        );
     }
 
     resolveWebviewView(
@@ -344,6 +350,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         step: stepCount
                     });
                     break;
+                case 'reflection':
+                    this._view?.webview.postMessage({
+                        type: 'agentReflection',
+                        content: step.content,
+                        attempt: step.attempt ?? 0
+                    });
+                    break;
                 case 'plan':
                     this._pendingPlanMessages = messages;
                     this._view?.webview.postMessage({
@@ -591,6 +604,7 @@ body {
 }
 .agent-step.success { border-left-color: #4caf50; }
 .agent-step.failure { border-left-color: #f44336; }
+.agent-step.reflection { border-left-color: #f59e0b; }
 .step-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
 .step-body { flex: 1; min-width: 0; }
 .step-title { font-weight: 600; }
@@ -916,6 +930,15 @@ function addToolResult(name,output,ok,step){
   s.querySelector('.step-body').appendChild(d); scrollBot();
 }
 
+function addReflection(content,attempt){
+  if(!currentStepsEl){agentStart();}
+  const s=document.createElement('div'); s.className='agent-step reflection';
+  s.innerHTML='<span class="step-icon">🔄</span><div class="step-body"><div class="step-title">Reflecting (attempt '+(attempt||1)+')</div><div class="step-detail">'+esc(content||'')+'</div></div>';
+  const det=s.querySelector('.step-detail');
+  if(det)det.onclick=()=>det.classList.toggle('expanded');
+  currentStepsEl.appendChild(s); scrollBot();
+}
+
 function showPlan(html){
   setRunning(false); hideEmpty();
   const d=document.createElement('div'); d.className='message assistant';
@@ -945,6 +968,7 @@ window.addEventListener('message',e=>{
     case 'agentThinking': break;
     case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step); break;
     case 'agentToolResult': addToolResult(m.toolName,m.output,m.success,m.step); break;
+    case 'agentReflection': addReflection(m.content,m.attempt); break;
     case 'agentPlan': showPlan(m.html); break;
     case 'agentDone':
       if(m.html&&currentBubble){

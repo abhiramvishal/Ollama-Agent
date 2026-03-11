@@ -221,6 +221,11 @@
           "type": "number",
           "default": 3,
           "description": "Number of recall memory entries to inject per message"
+        },
+        "ollamaCopilot.reflexionMaxRetries": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum self-correction retries when a tool call fails (Reflexion loop). Set to 0 to disable."
         }
       }
     },
