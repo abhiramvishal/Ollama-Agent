@@ -5,12 +5,16 @@ import { AgentRunner, AgentStep } from './agentRunner';
 import { AgentTools } from './tools/agentTools';
 import { renderMarkdownToHtml } from './utils';
 import type { WorkspaceIndex } from './rag/workspaceIndex';
+import type { MemoryStore } from './memory/memoryStore';
+import type { SkillStore } from './memory/skillStore';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'ollamaCopilot.chatView';
     private _view?: vscode.WebviewView;
     private _client: OllamaClient;
     private _workspaceIndex: WorkspaceIndex;
+    private _memoryStore: MemoryStore;
+    private _skillStore: SkillStore;
     private _agentRunner: AgentRunner;
     private _chatHistory: ChatMessage[] = [];
     private _isAgentRunning = false;
@@ -19,11 +23,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     constructor(
         private readonly _extensionUri: vscode.Uri,
         client: OllamaClient,
-        workspaceIndex: WorkspaceIndex
+        workspaceIndex: WorkspaceIndex,
+        memoryStore: MemoryStore,
+        skillStore: SkillStore
     ) {
         this._client = client;
         this._workspaceIndex = workspaceIndex;
-        this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex));
+        this._memoryStore = memoryStore;
+        this._skillStore = skillStore;
+        this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex, memoryStore, skillStore));
     }
 
     resolveWebviewView(
@@ -49,6 +57,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this._refreshModels();
             this._checkConnection();
             this._sendIndexStatus();
+            this._sendMemoryData();
         }, 500);
     }
 
@@ -107,7 +116,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             case 'getIndexStatus':
                 this._sendIndexStatus();
                 break;
+            case 'getMemory':
+                await this._sendMemoryData();
+                break;
+            case 'updateCore':
+                if (msg.patch != null) {
+                    await this._memoryStore.updateCoreMemory(msg.patch);
+                    await this._sendMemoryData();
+                }
+                break;
+            case 'addSkillFromChat':
+                if (msg.name != null && msg.desc != null && msg.content != null) {
+                    await this._skillStore.addSkill(msg.name, msg.desc, msg.content, msg.tags?.split(',').map((t: string) => t.trim()).filter(Boolean));
+                    await this._sendMemoryData();
+                }
+                break;
+            case 'deleteSkill':
+                if (msg.id != null) {
+                    await this._skillStore.deleteSkill(msg.id);
+                    await this._sendMemoryData();
+                }
+                break;
         }
+    }
+
+    private async _sendMemoryData() {
+        if (!this._view) return;
+        const core = this._memoryStore.getCoreMemory();
+        const skills = this._skillStore.listSkills();
+        this._view.webview.postMessage({
+            type: 'memoryData',
+            core: { projectContext: core.projectContext, userPreferences: core.userPreferences, keyFacts: core.keyFacts },
+            recallCount: this._memoryStore.getRecallCount(),
+            archivalCount: this._memoryStore.getArchivalCount(),
+            skills: skills.map(s => ({ id: s.id, name: s.name, description: s.description })),
+        });
     }
 
     private _sendIndexStatus() {
@@ -174,8 +217,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // RAG: inject workspace context before user message (when enabled)
+        // Memory + skills (before RAG): core, recall, skills when enabled
         let fullMessage = processedText;
+        const memoryEnabled = config.get<boolean>('memoryEnabled', true);
+        if (memoryEnabled) {
+            try {
+                const coreBlock = this._memoryStore.getCoreContextBlock();
+                const recallTopK = config.get<number>('recallTopK', 3);
+                const recallBlock = this._memoryStore.getRecallContextBlock(processedText, recallTopK);
+                const skillBlock = this._skillStore.getSkillContextBlock(processedText);
+                const parts: string[] = [];
+                if (coreBlock) parts.push(coreBlock);
+                if (recallBlock) parts.push(recallBlock);
+                if (skillBlock) parts.push(skillBlock);
+                if (parts.length > 0) {
+                    fullMessage = parts.join('\n\n') + '\n\n' + fullMessage;
+                }
+            } catch {
+                // Non-blocking
+            }
+        }
+        // RAG: inject workspace context before user message (when enabled)
         try {
             const ragContext = await this._workspaceIndex.getContext(processedText);
             if (ragContext) {
@@ -216,9 +278,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         messages.push({ role: 'user', content: fullMessage });
 
         if (isAgentTask) {
-            await this._runAgent(messages, model, text);
+            await this._runAgent(messages, model, text, processedText);
         } else {
-            await this._runChat(messages, model, text);
+            await this._runChat(messages, model, text, processedText);
         }
     }
 
@@ -226,7 +288,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return vscode.window.activeTextEditor?.document.languageId || '';
     }
 
-    private async _runChat(messages: ChatMessage[], model: string, userMsg: string) {
+    private async _runChat(messages: ChatMessage[], model: string, userMsg: string, processedText: string) {
         this._isAgentRunning = true;
         let fullResponse = '';
         this._view?.webview.postMessage({ type: 'startAssistantMessage' });
@@ -240,14 +302,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 html: renderMarkdownToHtml(fullResponse)
             });
             this._pushHistory(userMsg, fullResponse);
-        } catch (err: any) {
-            this._view?.webview.postMessage({ type: 'error', message: err.message });
+            await this._autoSaveRecall(userMsg, fullResponse, model);
+        } catch (err: unknown) {
+            this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
         } finally {
             this._isAgentRunning = false;
         }
     }
 
-    private async _runAgent(messages: ChatMessage[], model: string, userMsg: string) {
+    private async _runAgent(messages: ChatMessage[], model: string, userMsg: string, processedText: string) {
         this._isAgentRunning = true;
         this._view?.webview.postMessage({ type: 'agentStart' });
         let fullTextResponse = '';
@@ -303,10 +366,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
             await this._agentRunner.run({ messages, model, onStep });
             this._pushHistory(userMsg, fullTextResponse);
-        } catch (err: any) {
-            this._view?.webview.postMessage({ type: 'error', message: err.message });
+            await this._autoSaveRecall(userMsg, fullTextResponse, model);
+        } catch (err: unknown) {
+            this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
         } finally {
             this._isAgentRunning = false;
+        }
+    }
+
+    private async _autoSaveRecall(userMsg: string, fullResponse: string, model: string) {
+        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        if (!config.get<boolean>('autoSaveMemory', true)) return;
+        try {
+            const content = `User asked: ${userMsg.slice(0, 200)} | Response summary: ${fullResponse.slice(0, 300)}`;
+            const lang = this._getEditorLang();
+            const tags = [model, lang].filter(Boolean);
+            await this._memoryStore.addRecall(content, 'auto', tags);
+        } catch {
+            // Non-blocking
         }
     }
 
@@ -320,7 +397,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this._runAgent(
             [...messages, { role: 'user', content: 'Plan approved. Execute all steps now.' }],
             model,
-            'Plan execution'
+            'Plan execution',
+            'Plan approved. Execute all steps now.'
         );
     }
 
@@ -454,6 +532,27 @@ body {
   border: 2px solid var(--vscode-focusBorder); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .index-refresh { font-size: 11px; padding: 2px 6px; }
+.memory-bar {
+  display: flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground);
+}
+.memory-summary { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.memory-panel {
+  display: none; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-inactiveSelectionBackground, rgba(0,0,0,0.05)); font-size: 12px;
+}
+.memory-panel.open { display: block; }
+.memory-panel label { display: block; margin-top: 8px; margin-bottom: 2px; font-weight: 600; }
+.memory-panel textarea { width: 100%; min-height: 50px; max-height: 80px; padding: 6px; font-size: 11px; resize: vertical;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
+.memory-panel .key-facts-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.memory-panel .key-fact-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px;
+  background: var(--vscode-badge-background); font-size: 11px; }
+.memory-panel .key-fact-tag button { background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; }
+.memory-panel .skills-list { margin-top: 6px; }
+.memory-panel .skill-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+.memory-panel .skill-row button { font-size: 10px; padding: 2px 6px; }
+.memory-panel .mem-save-btn { margin-top: 10px; padding: 5px 12px; font-size: 12px; }
 .mode-badge {
   font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600;
   background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
@@ -559,6 +658,22 @@ strong { font-weight: 700; } em { font-style: italic; }
   <span class="index-status" id="indexStatus"></span>
   <button class="btn-icon index-refresh" id="reindexBtn" title="Re-index workspace">Re-index</button>
 </div>
+<div class="memory-bar" id="memoryBar">
+  <span class="memory-summary" id="memorySummary">Memory: —</span>
+  <button class="btn-icon index-refresh" id="memoryBtn" title="View / Edit Memory">⚙ Memory</button>
+</div>
+<div class="memory-panel" id="memoryPanel">
+  <label>Project context (max 500)</label>
+  <textarea id="memProjectContext" maxlength="500" placeholder="What is this project? Tech stack, architecture..."></textarea>
+  <label>User preferences (max 300)</label>
+  <textarea id="memUserPreferences" maxlength="300" placeholder="Coding style, preferences..."></textarea>
+  <label>Key facts</label>
+  <div class="key-facts-list" id="keyFactsList"></div>
+  <input type="text" id="newKeyFact" placeholder="Add fact (max 100 chars)" maxlength="100" style="width:100%;margin-top:4px;padding:4px;font-size:11px;">
+  <label>Skills</label>
+  <div class="skills-list" id="skillsList"></div>
+  <button class="mem-save-btn btn-approve" id="memorySaveBtn">Save</button>
+</div>
 <div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
 <div class="messages" id="messages">
   <div class="empty-state" id="emptyState">
@@ -617,6 +732,7 @@ const emptyState=$('emptyState');
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
 vscode.postMessage({type:'getIndexStatus'});
+vscode.postMessage({type:'getMemory'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 modeBadge.onclick=()=>{
@@ -634,6 +750,13 @@ $('refreshBtn').onclick=()=>{
   vscode.postMessage({type:'getConnectionStatus'});
 };
 $('reindexBtn').onclick=()=>vscode.postMessage({type:'reindexWorkspace'});
+$('memoryBtn').onclick=()=>{ const p=$('memoryPanel'); p.classList.toggle('open',!p.classList.contains('open')); };
+$('memorySaveBtn').onclick=()=>{
+  const core={ projectContext: $('memProjectContext').value, userPreferences: $('memUserPreferences').value, keyFacts: window._keyFacts||[] };
+  vscode.postMessage({type:'updateCore',patch:core});
+};
+$('newKeyFact').onkeydown=(e)=>{ if(e.key==='Enter'){ const v=$('newKeyFact').value.trim(); if(v){ (window._keyFacts=window._keyFacts||[]).push(v); $('newKeyFact').value=''; renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); } } };
+function renderKeyFacts(){ const el=$('keyFactsList'); if(!el)return; const facts=window._keyFacts||[]; el.innerHTML=facts.map((f,i)=>'<span class="key-fact-tag">'+esc(f)+' <button data-i="'+i+'" title="Remove">×</button></span>').join(''); el.querySelectorAll('button').forEach(btn=>{ btn.onclick=()=>{ const i=parseInt(btn.dataset.i,10); window._keyFacts=window._keyFacts||[]; window._keyFacts.splice(i,1); renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); }; }); }
 modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.value});
 stopBtn.onclick=()=>{vscode.postMessage({type:'cancelAgent'});setRunning(false);};
 
@@ -846,6 +969,18 @@ window.addEventListener('message',e=>{
         if(m.fileCount!=null) statusEl.textContent='Indexing workspace... ('+m.fileCount+' files)';
         if(!m.indexing&&m.chunkCount!=null) statusEl.textContent=m.chunkCount+' chunks indexed';
       }
+      break;
+    case 'memoryData':
+      const core=m.core||{};
+      $('memProjectContext').value=core.projectContext||'';
+      $('memUserPreferences').value=core.userPreferences||'';
+      window._keyFacts=Array.isArray(core.keyFacts)?core.keyFacts.slice():[];
+      renderKeyFacts();
+      const recall=m.recallCount||0, arch=m.archivalCount||0, skillList=m.skills||[];
+      const sum=[core.projectContext?core.projectContext.slice(0,40)+'…':'—', 'R:'+recall, 'A:'+arch, 'S:'+skillList.length].join(' · ');
+      const sumEl=$('memorySummary'); if(sumEl) sumEl.textContent='Memory: '+sum;
+      const skillsEl=$('skillsList'); if(skillsEl) skillsEl.innerHTML=skillList.map(s=>'<div class="skill-row"><span>'+esc(s.name)+'</span><button data-id="'+esc(s.id)+'">Delete</button></div>').join('')||'<span style="opacity:0.7">No skills</span>';
+      skillsEl.querySelectorAll('button').forEach(btn=>{ btn.onclick=()=>vscode.postMessage({type:'deleteSkill',id:btn.dataset.id}); });
       break;
     case 'selectionContext':
       selText=m.text; selLang=m.lang;

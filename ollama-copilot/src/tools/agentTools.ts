@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import type { WorkspaceIndex } from '../rag/workspaceIndex';
 import type { CodeChunk } from '../rag/codeChunker';
+import type { MemoryStore } from '../memory/memoryStore';
+import type { SkillStore } from '../memory/skillStore';
 
 export interface ToolResult {
     success: boolean;
@@ -94,17 +96,67 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             query: { type: 'string', description: 'Natural language or concept to search for', required: true },
             top_k: { type: 'string', description: 'Maximum number of results (default 5)', required: false }
         }
+    },
+    {
+        name: 'save_memory',
+        description: 'Save an important fact, decision, or insight to persistent memory for future sessions',
+        parameters: {
+            content: { type: 'string', description: 'Content to save', required: true },
+            tier: { type: 'string', description: "'recall' or 'archival' (default recall)", required: false },
+            tags: { type: 'string', description: 'Optional comma-separated tags', required: false }
+        }
+    },
+    {
+        name: 'search_memory',
+        description: 'Search your persistent memory for relevant past context, decisions, or facts',
+        parameters: {
+            query: { type: 'string', description: 'Search query', required: true },
+            tier: { type: 'string', description: "'recall' | 'archival' | 'both' (default both)", required: false },
+            top_k: { type: 'string', description: 'Max results (default 5)', required: false }
+        }
+    },
+    {
+        name: 'update_project_context',
+        description: 'Update the always-present project context (what this project is, its tech stack, architecture)',
+        parameters: {
+            context: { type: 'string', description: 'Project context text (replaces existing)', required: true }
+        }
+    },
+    {
+        name: 'add_key_fact',
+        description: 'Add a critical fact to always-present core memory (e.g. Auth uses JWT, DB is PostgreSQL)',
+        parameters: {
+            fact: { type: 'string', description: 'Fact to add (max 100 chars)', required: true }
+        }
+    },
+    {
+        name: 'add_skill',
+        description: 'Save a reusable coding pattern or instruction as a skill for future use',
+        parameters: {
+            name: { type: 'string', description: 'Skill name', required: true },
+            description: { type: 'string', description: 'Short description for matching', required: true },
+            content: { type: 'string', description: 'Full skill instructions/examples', required: true },
+            tags: { type: 'string', description: 'Optional comma-separated tags', required: false }
+        }
     }
 ];
 
 export class AgentTools {
     private workspaceRoot: string;
     private workspaceIndex?: WorkspaceIndex;
+    private memoryStore?: MemoryStore;
+    private skillStore?: SkillStore;
 
-    constructor(workspaceIndex?: WorkspaceIndex) {
+    constructor(
+        workspaceIndex?: WorkspaceIndex,
+        memoryStore?: MemoryStore,
+        skillStore?: SkillStore
+    ) {
         const folders = vscode.workspace.workspaceFolders;
         this.workspaceRoot = folders ? folders[0].uri.fsPath : '';
         this.workspaceIndex = workspaceIndex;
+        this.memoryStore = memoryStore;
+        this.skillStore = skillStore;
     }
 
     private resolvePath(relativePath: string): string {
@@ -127,6 +179,11 @@ export class AgentTools {
                 case 'run_terminal': return await this.runTerminal(args.command);
                 case 'get_diagnostics': return await this.getDiagnostics(args.path);
                 case 'semantic_search': return await this.semanticSearch(args.query, args.top_k);
+                case 'save_memory': return await this.saveMemory(args.content, args.tier, args.tags);
+                case 'search_memory': return await this.searchMemory(args.query, args.tier, args.top_k);
+                case 'update_project_context': return await this.updateProjectContext(args.context);
+                case 'add_key_fact': return await this.addKeyFact(args.fact);
+                case 'add_skill': return await this.addSkill(args.name, args.description, args.content, args.tags);
                 default: return { success: false, output: '', error: `Unknown tool: ${name}` };
             }
         } catch (err: any) {
@@ -352,6 +409,91 @@ export class AgentTools {
         }
     }
 
+    private async saveMemory(content: string, tier?: string, tagsStr?: string): Promise<ToolResult> {
+        if (!this.memoryStore) {
+            return { success: false, output: '', error: 'Memory not available.' };
+        }
+        if (!content?.trim()) {
+            return { success: false, output: '', error: 'save_memory requires "content".' };
+        }
+        try {
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const t = (tier || 'recall').toLowerCase();
+            if (t === 'archival') {
+                await this.memoryStore.addArchival(content.trim(), 'agent', tags);
+            } else {
+                await this.memoryStore.addRecall(content.trim(), 'agent', tags);
+            }
+            return { success: true, output: `Saved to ${t} memory.` };
+        } catch (err) {
+            return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    private async searchMemory(query: string, tier?: string, topKStr?: string): Promise<ToolResult> {
+        if (!this.memoryStore) {
+            return { success: false, output: '', error: 'Memory not available.' };
+        }
+        if (!query?.trim()) {
+            return { success: false, output: '', error: 'search_memory requires "query".' };
+        }
+        try {
+            const t = (tier || 'both').toLowerCase() as 'recall' | 'archival' | 'both';
+            const topK = topKStr ? Math.max(1, parseInt(topKStr, 10) || 5) : 5;
+            const entries = this.memoryStore.searchMemory(query, t, topK);
+            const lines = entries.map(e => `[${e.source}] ${e.content}`);
+            return { success: true, output: lines.length ? lines.join('\n\n') : 'No matching memory found.' };
+        } catch (err) {
+            return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    private async updateProjectContext(context: string): Promise<ToolResult> {
+        if (!this.memoryStore) {
+            return { success: false, output: '', error: 'Memory not available.' };
+        }
+        try {
+            await this.memoryStore.updateCoreMemory({ projectContext: context || '' });
+            return { success: true, output: 'Project context updated.' };
+        } catch (err) {
+            return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    private async addKeyFact(fact: string): Promise<ToolResult> {
+        if (!this.memoryStore) {
+            return { success: false, output: '', error: 'Memory not available.' };
+        }
+        const f = fact?.trim().slice(0, 100);
+        if (!f) {
+            return { success: false, output: '', error: 'add_key_fact requires "fact".' };
+        }
+        try {
+            const core = this.memoryStore.getCoreMemory();
+            const keyFacts = [...core.keyFacts, f].slice(-10);
+            await this.memoryStore.updateCoreMemory({ keyFacts });
+            return { success: true, output: 'Key fact added.' };
+        } catch (err) {
+            return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    private async addSkill(name: string, description: string, content: string, tagsStr?: string): Promise<ToolResult> {
+        if (!this.skillStore) {
+            return { success: false, output: '', error: 'Skill store not available.' };
+        }
+        if (!name?.trim() || !description?.trim() || !content?.trim()) {
+            return { success: false, output: '', error: 'add_skill requires name, description, and content.' };
+        }
+        try {
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const skill = await this.skillStore.addSkill(name.trim(), description.trim(), content.trim(), tags);
+            return { success: true, output: `Skill "${skill.name}" saved (id: ${skill.id}).` };
+        } catch (err) {
+            return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
     /** Generate the system prompt block describing all tools */
     static getToolsSystemPrompt(): string {
         return `You are a powerful local coding assistant with access to tools that let you read, write, and modify files, search the codebase, and run terminal commands — just like Claude Code.
@@ -380,6 +522,10 @@ ${TOOL_DEFINITIONS.map(t => {
 4. Always show your reasoning before making tool calls
 5. After all tool calls are done, output: <agent_done>
 6. If you need user confirmation before destructive actions, ask first
+7. Use save_memory to record important decisions, findings, or facts discovered during tasks
+8. Use search_memory at the start of complex tasks to check for relevant prior context
+9. Use update_project_context when you learn the project's purpose, stack, or architecture
+10. Use add_key_fact for critical facts that should always be available (e.g. API keys pattern, DB schema, coding conventions)
 
 ## PLAN MODE
 

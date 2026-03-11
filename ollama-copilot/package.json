@@ -70,6 +70,14 @@
       {
         "command": "ollamaCopilot.reindexWorkspace",
         "title": "Ollama: Re-index Workspace"
+      },
+      {
+        "command": "ollamaCopilot.clearMemory",
+        "title": "Ollama: Clear Agent Memory"
+      },
+      {
+        "command": "ollamaCopilot.viewMemory",
+        "title": "Ollama: View / Edit Memory"
       }
     ],
     "viewsContainers": {
@@ -198,6 +206,21 @@
           "type": "number",
           "default": 5,
           "description": "Number of top code chunks to inject into the prompt from RAG"
+        },
+        "ollamaCopilot.memoryEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable persistent memory across sessions (core, recall, archival)"
+        },
+        "ollamaCopilot.autoSaveMemory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save conversation summaries to recall memory"
+        },
+        "ollamaCopilot.recallTopK": {
+          "type": "number",
+          "default": 3,
+          "description": "Number of recall memory entries to inject per message"
         }
       }
     },

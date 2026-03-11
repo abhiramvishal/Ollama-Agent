@@ -3,16 +3,26 @@ import { OllamaClient, KNOWN_MODELS } from './ollamaClient';
 import { OllamaCompletionProvider } from './completionProvider';
 import { ChatViewProvider } from './chatViewProvider';
 import { WorkspaceIndex } from './rag/workspaceIndex';
+import { MemoryStore } from './memory/memoryStore';
+import { SkillStore } from './memory/skillStore';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
 let workspaceIndex: WorkspaceIndex;
+let memoryStore: MemoryStore;
+let skillStore: SkillStore;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const client = new OllamaClient();
     workspaceIndex = new WorkspaceIndex();
     workspaceIndex.startWatching();
     context.subscriptions.push({ dispose: () => workspaceIndex.dispose() });
+
+    memoryStore = new MemoryStore(context.globalStorageUri);
+    skillStore = new SkillStore(context.globalStorageUri);
+    await memoryStore.init();
+    await skillStore.init();
+    context.subscriptions.push({ dispose: () => { memoryStore.save(); } });
 
     // Status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -22,7 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(statusBarItem);
 
     // Chat sidebar
-    chatProvider = new ChatViewProvider(context.extensionUri, client, workspaceIndex);
+    chatProvider = new ChatViewProvider(context.extensionUri, client, workspaceIndex, memoryStore, skillStore);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             ChatViewProvider.viewType,
@@ -147,6 +157,26 @@ export function activate(context: vscode.ExtensionContext): void {
                     .update('model', name, vscode.ConfigurationTarget.Global);
                 updateStatusBar(client, name);
             }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.clearMemory', async () => {
+            const confirm = await vscode.window.showWarningMessage(
+                'Clear all agent memory (core, recall, archival)? This cannot be undone.',
+                'Clear',
+                'Cancel'
+            );
+            if (confirm === 'Clear') {
+                await memoryStore.clearAll();
+                vscode.window.showInformationMessage('Ollama Copilot: Memory cleared.');
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.viewMemory', () => {
+            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
         })
     );
 
