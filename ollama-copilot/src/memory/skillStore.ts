@@ -138,17 +138,18 @@ export class SkillStore {
     });
     scored.sort((a, b) => b.score - a.score);
     const result = scored.slice(0, topK).filter(x => x.score > 0).map(x => x.skill);
-    if (result.length === 0) {
-      result.push(...this._skills.slice(0, topK));
+    // Only increment useCount on genuine matches (not fallback), so the metric stays meaningful
+    if (result.length > 0) {
+      for (const s of result) {
+        s.useCount = (s.useCount || 0) + 1;
+      }
+      this._scheduleSave();
     }
-    for (const s of result) {
-      s.useCount = (s.useCount || 0) + 1;
-    }
-    this._scheduleSave();
     return result.map(s => ({ ...s }));
   }
 
   getSkillContextBlock(query: string): string {
+    // findRelevant now only returns genuine matches (score > 0), so empty = no injection
     const skills = this.findRelevant(query, 2);
     if (skills.length === 0) return '';
     const lines: string[] = ['<skills>'];

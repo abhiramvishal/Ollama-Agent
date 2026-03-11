@@ -97,6 +97,8 @@ export class MemoryStore {
           version: typeof parsed.version === 'number' ? parsed.version : 1,
         };
       }
+      // Run consolidation once per session to move stale recall → archival
+      await this.consolidate();
     } catch {
       this._data = defaultData();
     }
