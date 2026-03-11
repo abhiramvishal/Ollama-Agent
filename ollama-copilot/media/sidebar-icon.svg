@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Llama-style head silhouette with spark -->
+  <path d="M12 4c-2 0-4 1.5-4 4 0 1.5.5 2.8 1.2 3.8L8 14h8l-1.2-2.2c.7-1 1.2-2.3 1.2-3.8 0-2.5-2-4-4-4z"/>
+  <ellipse cx="10" cy="9" rx="1" ry="1.2" fill="currentColor"/>
+  <ellipse cx="14" cy="9" rx="1" ry="1.2" fill="currentColor"/>
+  <!-- Sparkle -->
+  <path d="M18 6l1.5 1.5L21 9l-1.5 1.5L18 12l-1.5-1.5L15 9l1.5-1.5L18 6z"/>
+</svg>

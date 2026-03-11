@@ -1,0 +1,146 @@
+{
+  "name": "ollama-copilot",
+  "displayName": "Ollama Copilot",
+  "description": "Free local AI coding assistant powered by Ollama — no API key, no cloud",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ollamaCopilot.openChat",
+        "title": "Ollama: Open Chat"
+      },
+      {
+        "command": "ollamaCopilot.explainCode",
+        "title": "Ollama: Explain Code"
+      },
+      {
+        "command": "ollamaCopilot.refactorCode",
+        "title": "Ollama: Refactor Code"
+      },
+      {
+        "command": "ollamaCopilot.fixCode",
+        "title": "Ollama: Fix Code"
+      },
+      {
+        "command": "ollamaCopilot.generateDocs",
+        "title": "Ollama: Generate Docs"
+      },
+      {
+        "command": "ollamaCopilot.selectModel",
+        "title": "Ollama: Select Model"
+      },
+      {
+        "command": "ollamaCopilot.pullModel",
+        "title": "Ollama: Pull Model"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ollamaCopilot",
+          "title": "Ollama Copilot",
+          "icon": "media/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ollamaCopilot": [
+        {
+          "type": "webview",
+          "id": "ollamaCopilot.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ollamaCopilot.explainCode",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@1"
+        },
+        {
+          "command": "ollamaCopilot.refactorCode",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@2"
+        },
+        {
+          "command": "ollamaCopilot.fixCode",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@3"
+        },
+        {
+          "command": "ollamaCopilot.generateDocs",
+          "when": "editorHasSelection",
+          "group": "ollamaCopilot@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Ollama Copilot",
+      "properties": {
+        "ollamaCopilot.endpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama API endpoint URL"
+        },
+        "ollamaCopilot.model": {
+          "type": "string",
+          "default": "llama3",
+          "description": "Default model for chat and completions"
+        },
+        "ollamaCopilot.enableInlineCompletion": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Copilot-style inline code completions"
+        },
+        "ollamaCopilot.completionDebounceMs": {
+          "type": "number",
+          "default": 600,
+          "description": "Debounce delay (ms) before requesting inline completion"
+        },
+        "ollamaCopilot.maxTokens": {
+          "type": "number",
+          "default": 512,
+          "description": "Maximum tokens for completions and chat responses"
+        },
+        "ollamaCopilot.systemPrompt": {
+          "type": "string",
+          "default": "You are an expert coding assistant. Be concise, accurate, and helpful.",
+          "description": "System prompt for the chat assistant"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "ollamaCopilot.openChat",
+        "key": "ctrl+shift+o",
+        "mac": "cmd+shift+o"
+      },
+      {
+        "command": "ollamaCopilot.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
