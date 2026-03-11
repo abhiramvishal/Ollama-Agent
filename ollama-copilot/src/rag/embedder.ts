@@ -92,7 +92,6 @@ export class Embedder {
         body: JSON.stringify({ model: this.model, input: text }),
         signal: controller.signal,
       });
-      clearTimeout(timeout);
       if (!res.ok) {
         const t = await res.text();
         throw new Error(`Embed failed: ${res.status} ${t}`);
