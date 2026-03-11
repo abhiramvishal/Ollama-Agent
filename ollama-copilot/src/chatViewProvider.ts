@@ -31,13 +31,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = workspaceIndex;
         this._memoryStore = memoryStore;
         this._skillStore = skillStore;
-        const config = vscode.workspace.getConfiguration('ollamaCopilot');
-        const maxRetries = config.get<number>('reflexionMaxRetries', 3);
-        this._agentRunner = new AgentRunner(
-            client,
-            new AgentTools(workspaceIndex, memoryStore, skillStore),
-            maxRetries
-        );
+        const maxRetries = vscode.workspace.getConfiguration('ollamaCopilot').get<number>('reflexionMaxRetries', 3);
+        this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex, memoryStore, skillStore), maxRetries);
     }
 
     resolveWebviewView(
@@ -933,7 +928,7 @@ function addToolResult(name,output,ok,step){
 function addReflection(content,attempt){
   if(!currentStepsEl){agentStart();}
   const s=document.createElement('div'); s.className='agent-step reflection';
-  s.innerHTML='<span class="step-icon">🔄</span><div class="step-body"><div class="step-title">Reflecting (attempt '+(attempt||1)+')</div><div class="step-detail">'+esc(content||'')+'</div></div>';
+  s.innerHTML='<span class="step-icon">🔄</span><div class="step-body"><div class="step-title">Reflecting (attempt '+esc(String(attempt||1))+')</div><div class="step-detail">'+esc(content||'')+'</div></div>';
   const det=s.querySelector('.step-detail');
   if(det)det.onclick=()=>det.classList.toggle('expanded');
   currentStepsEl.appendChild(s); scrollBot();
