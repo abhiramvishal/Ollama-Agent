@@ -1,14 +1,43 @@
 {
   "name": "ollama-copilot",
+  "publisher": "ollama-copilot",
   "displayName": "Ollama Copilot",
-  "description": "Local AI coding agent powered by Ollama — Claude Code-style agent mode, inline completions, plan & execute, file editing, terminal access. No cloud, no API keys.",
-  "version": "0.2.0",
+  "description": "Local AI coding assistant powered by Ollama — chat, inline completions, code actions, git tools, and more.",
+  "version": "1.0.0",
+  "icon": "assets/icon.png",
+  "license": "MIT",
+  "homepage": "https://github.com/abhiramvishal/Ollama-Agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abhiramvishal/Ollama-Agent"
+  },
+  "bugs": {
+    "url": "https://github.com/abhiramvishal/Ollama-Agent/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["AI", "Other"],
-  "activationEvents": ["onStartupFinished"],
-  "main": "./out/extension.js",
+  "categories": [
+    "AI",
+    "Chat",
+    "Machine Learning",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ollama",
+    "copilot",
+    "ai",
+    "llm",
+    "local",
+    "completion",
+    "chat",
+    "codellama"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
@@ -379,15 +408,18 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "bundle": "node esbuild.js",
+    "bundle:prod": "node esbuild.js --production",
+    "watch": "tsc -p ./ --watch",
+    "package": "npm run bundle:prod && vsce package --no-dependencies",
+    "vscode:prepublish": "npm run bundle:prod"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
-    "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
-    "@vscode/vsce": "^2.22.0"
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.32.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.3.0"
   }
 }
