@@ -3,15 +3,18 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { OllamaClient, ChatMessage } from './ollamaClient';
 import { AgentTools, ToolResult } from './tools/agentTools';
+import type { FileDiff } from './diff/diffEngine';
 import { ReflectionEngine } from './reflexion/reflectionEngine';
 
 export interface AgentStep {
-    type: 'thinking' | 'tool_call' | 'tool_result' | 'response' | 'plan' | 'done' | 'error' | 'reflection';
+    type: 'thinking' | 'tool_call' | 'tool_result' | 'response' | 'plan' | 'done' | 'error' | 'reflection' | 'diff_preview';
     content: string;
     toolName?: string;
     toolArgs?: Record<string, string>;
     success?: boolean;
     attempt?: number;
+    diff?: FileDiff;
+    stepId?: string;
 }
 
 export type AgentStepCallback = (step: AgentStep) => void;
@@ -22,6 +25,7 @@ export interface AgentRunOptions {
     onStep: AgentStepCallback;
     maxIterations?: number;
     maxReflections?: number;
+    diffPreviewEnabled?: boolean;
 }
 
 /**
@@ -57,10 +61,13 @@ function isDone(text: string): boolean {
 
 const FILE_EDIT_TOOLS = new Set(['write_file', 'edit_file', 'create_file']);
 
+const DIFF_TIMEOUT_MS = 5 * 60 * 1000;
+
 export class AgentRunner {
     private tools: AgentTools;
     private client: OllamaClient;
     private _maxReflections: number;
+    private _pendingDiffs = new Map<string, (approved: boolean) => void>();
 
     constructor(client: OllamaClient, tools?: AgentTools, maxReflections?: number) {
         this.client = client;
@@ -68,9 +75,30 @@ export class AgentRunner {
         this._maxReflections = maxReflections ?? 3;
     }
 
+    resolveDiff(stepId: string, approved: boolean): void {
+        const resolve = this._pendingDiffs.get(stepId);
+        if (resolve) {
+            this._pendingDiffs.delete(stepId);
+            resolve(approved);
+        }
+    }
+
+    private _awaitDiffDecision(stepId: string): Promise<boolean> {
+        return new Promise<boolean>((resolve) => {
+            this._pendingDiffs.set(stepId, resolve);
+            setTimeout(() => {
+                if (this._pendingDiffs.has(stepId)) {
+                    this._pendingDiffs.delete(stepId);
+                    resolve(false);
+                }
+            }, DIFF_TIMEOUT_MS);
+        });
+    }
+
     async run(options: AgentRunOptions): Promise<void> {
         const { messages, model, onStep, maxIterations = 15 } = options;
         const maxReflections = options.maxReflections ?? this._maxReflections;
+        const diffPreviewEnabled = options.diffPreviewEnabled !== false;
 
         const history: ChatMessage[] = [...messages];
         const reflectionEngine = new ReflectionEngine(maxReflections);
@@ -151,8 +179,29 @@ export class AgentRunner {
                         content: reflectionEngine.getReflectionBlock() +
                             '\n\nThe previous tool call failed. Review the reflection above and try again with a corrected approach.'
                     });
-                    // Do NOT increment iteration — reflection retries are bonus attempts
                     continue;
+                }
+
+                if (result.diff && diffPreviewEnabled) {
+                    const stepId = `diff_${Date.now()}`;
+                    onStep({ type: 'diff_preview', content: '', diff: result.diff, stepId });
+                    const approved = await this._awaitDiffDecision(stepId);
+                    if (!approved) {
+                        const d = result.diff;
+                        filesTouched.delete(d.path);
+                        if (d.isNew) {
+                            await this.tools.executeTool('delete_file', { path: d.path });
+                        } else {
+                            await this.tools.executeTool('write_file', { path: d.path, content: d.oldContent });
+                        }
+                        history.push({ role: 'assistant', content: fullResponse });
+                        history.push({
+                            role: 'user',
+                            content: `The file change to ${d.path} was rejected by the user. Do NOT make this change. Try a different approach or ask what to do instead.`
+                        });
+                        onStep({ type: 'reflection', content: 'File change rejected by user.', attempt: 0 });
+                        continue;
+                    }
                 }
 
                 onStep({

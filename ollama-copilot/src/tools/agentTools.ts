@@ -6,11 +6,13 @@ import type { WorkspaceIndex } from '../rag/workspaceIndex';
 import type { CodeChunk } from '../rag/codeChunker';
 import type { MemoryStore } from '../memory/memoryStore';
 import type { SkillStore } from '../memory/skillStore';
+import { computeDiff, type FileDiff } from '../diff/diffEngine';
 
 export interface ToolResult {
     success: boolean;
     output: string;
     error?: string;
+    diff?: FileDiff;
 }
 
 export interface ToolDefinition {
@@ -210,11 +212,13 @@ export class AgentTools {
             fs.mkdirSync(dir, { recursive: true });
         }
         const existed = fs.existsSync(fullPath);
+        const oldContent = existed ? fs.readFileSync(fullPath, 'utf8') : '';
         fs.writeFileSync(fullPath, content, 'utf8');
-        // Open file in editor to show changes
         const uri = vscode.Uri.file(fullPath);
         await vscode.workspace.openTextDocument(uri);
-        return { success: true, output: `${existed ? 'Updated' : 'Created'} file: ${filePath} (${content.split('\n').length} lines)` };
+        const lines = computeDiff(oldContent, content);
+        const diff: FileDiff = { path: filePath, oldContent, newContent: content, lines, isNew: !existed };
+        return { success: true, output: `${existed ? 'Updated' : 'Created'} file: ${filePath} (${content.split('\n').length} lines)`, diff };
     }
 
     private async editFile(filePath: string, oldText: string, newText: string): Promise<ToolResult> {
@@ -229,14 +233,15 @@ export class AgentTools {
         const updated = content.replace(oldText, newText);
         fs.writeFileSync(fullPath, updated, 'utf8');
 
-        // Show diff in editor
         const uri = vscode.Uri.file(fullPath);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
 
+        const lines = computeDiff(content, updated);
+        const diff: FileDiff = { path: filePath, oldContent: content, newContent: updated, lines, isNew: false };
         const removedLines = oldText.split('\n').length;
         const addedLines = newText.split('\n').length;
-        return { success: true, output: `Edited ${filePath}: replaced ${removedLines} lines with ${addedLines} lines` };
+        return { success: true, output: `Edited ${filePath}: replaced ${removedLines} lines with ${addedLines} lines`, diff };
     }
 
     private async createFile(filePath: string, content: string): Promise<ToolResult> {

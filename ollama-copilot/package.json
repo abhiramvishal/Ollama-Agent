@@ -226,6 +226,11 @@
           "type": "number",
           "default": 3,
           "description": "Maximum self-correction retries when a tool call fails (Reflexion loop). Set to 0 to disable."
+        },
+        "ollamaCopilot.diffPreviewEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a diff preview before the agent applies file changes."
         }
       }
     },

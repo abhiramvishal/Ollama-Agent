@@ -7,6 +7,7 @@ import { renderMarkdownToHtml } from './utils';
 import type { WorkspaceIndex } from './rag/workspaceIndex';
 import type { MemoryStore } from './memory/memoryStore';
 import type { SkillStore } from './memory/skillStore';
+import { formatDiffHtml } from './diff/diffEngine';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'ollamaCopilot.chatView';
@@ -137,6 +138,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     await this._skillStore.deleteSkill(msg.id);
                     await this._sendMemoryData();
                 }
+                break;
+            case 'approveDiff':
+                this._agentRunner.resolveDiff(msg.stepId, true);
+                break;
+            case 'rejectDiff':
+                this._agentRunner.resolveDiff(msg.stepId, false);
                 break;
         }
     }
@@ -352,6 +359,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         attempt: step.attempt ?? 0
                     });
                     break;
+                case 'diff_preview':
+                    if (step.diff && step.stepId) {
+                        this._view?.webview.postMessage({
+                            type: 'agentDiffPreview',
+                            stepId: step.stepId,
+                            path: step.diff.path,
+                            isNew: step.diff.isNew,
+                            html: formatDiffHtml(step.diff.lines)
+                        });
+                    }
+                    break;
                 case 'plan':
                     this._pendingPlanMessages = messages;
                     this._view?.webview.postMessage({
@@ -372,7 +390,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         };
 
         try {
-            await this._agentRunner.run({ messages, model, onStep });
+            const diffPreviewEnabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('diffPreviewEnabled', true);
+            await this._agentRunner.run({ messages, model, onStep, diffPreviewEnabled });
             this._pushHistory(userMsg, fullTextResponse);
             await this._autoSaveRecall(userMsg, fullTextResponse, model);
         } catch (err: unknown) {
@@ -600,6 +619,22 @@ body {
 .agent-step.success { border-left-color: #4caf50; }
 .agent-step.failure { border-left-color: #f44336; }
 .agent-step.reflection { border-left-color: #f59e0b; }
+.diff-block { border:1px solid var(--vscode-panel-border); border-radius:8px;
+  overflow:hidden; width:100%; margin:4px 0; font-family:monospace; font-size:11px; }
+.diff-header { background:rgba(124,58,237,0.15); padding:6px 10px;
+  font-size:11px; font-weight:600; color:#a78bfa; display:flex;
+  justify-content:space-between; align-items:center; }
+.diff-body { max-height:200px; overflow-y:auto; background:var(--vscode-editor-background); }
+.diff-line { padding:1px 10px; white-space:pre; }
+.diff-add { background:rgba(74,222,128,0.12); color:#4ade80; }
+.diff-remove { background:rgba(248,113,113,0.12); color:#f87171; }
+.diff-context { color:var(--vscode-descriptionForeground); }
+.diff-actions { display:flex; gap:6px; padding:6px 10px;
+  border-top:1px solid var(--vscode-panel-border); }
+.btn-approve-diff { background:#4ade80; color:#000; border:none; padding:4px 12px;
+  border-radius:5px; cursor:pointer; font-size:11px; font-weight:600; }
+.btn-reject-diff { background:#f87171; color:#000; border:none; padding:4px 12px;
+  border-radius:5px; cursor:pointer; font-size:11px; font-weight:600; }
 .step-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
 .step-body { flex: 1; min-width: 0; }
 .step-title { font-weight: 600; }
@@ -934,6 +969,21 @@ function addReflection(content,attempt){
   currentStepsEl.appendChild(s); scrollBot();
 }
 
+function showDiffPreview(stepId,filePath,isNew,html){
+  if(!currentStepsEl){agentStart();}
+  const wrap=document.createElement('div'); wrap.className='diff-block';
+  wrap.innerHTML='<div class="diff-header"><span>'+(isNew?'✚ New file: ':'~ Edit: ')+esc(filePath)+'</span></div><div class="diff-body">'+html+'</div><div class="diff-actions"><button class="btn-approve-diff">✓ Apply</button><button class="btn-reject-diff">✕ Reject</button></div>';
+  wrap.querySelector('.btn-approve-diff').onclick=()=>{
+    wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#4ade80">Applied.</em>';
+    vscode.postMessage({type:'approveDiff',stepId});
+  };
+  wrap.querySelector('.btn-reject-diff').onclick=()=>{
+    wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#f87171">Rejected.</em>';
+    vscode.postMessage({type:'rejectDiff',stepId});
+  };
+  currentStepsEl.appendChild(wrap); scrollBot();
+}
+
 function showPlan(html){
   setRunning(false); hideEmpty();
   const d=document.createElement('div'); d.className='message assistant';
@@ -964,6 +1014,7 @@ window.addEventListener('message',e=>{
     case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step); break;
     case 'agentToolResult': addToolResult(m.toolName,m.output,m.success,m.step); break;
     case 'agentReflection': addReflection(m.content,m.attempt); break;
+    case 'agentDiffPreview': showDiffPreview(m.stepId,m.path,m.isNew,m.html); break;
     case 'agentPlan': showPlan(m.html); break;
     case 'agentDone':
       if(m.html&&currentBubble){
