@@ -1,7 +1,7 @@
 {
-  "name": "ollama-copilot",
-  "publisher": "ollama-copilot",
-  "displayName": "Ollama Copilot",
+  "name": "clawpilot",
+  "publisher": "clawpilot",
+  "displayName": "ClawPilot",
   "description": "Local AI coding assistant powered by Ollama — chat, inline completions, code actions, git tools, and more.",
   "version": "1.0.0",
   "icon": "assets/icon.png",
@@ -41,144 +41,148 @@
   "contributes": {
     "commands": [
       {
-        "command": "ollamaCopilot.openChat",
-        "title": "Ollama: Open Chat"
+        "command": "clawpilot.openChat",
+        "title": "ClawPilot: Open Chat"
       },
       {
-        "command": "ollamaCopilot.explainCode",
-        "title": "Ollama: Explain Code"
+        "command": "clawpilot.explainCode",
+        "title": "ClawPilot: Explain Code"
       },
       {
-        "command": "ollamaCopilot.refactorCode",
-        "title": "Ollama: Refactor Code"
+        "command": "clawpilot.refactorCode",
+        "title": "ClawPilot: Refactor Code"
       },
       {
-        "command": "ollamaCopilot.fixCode",
-        "title": "Ollama: Fix Bugs"
+        "command": "clawpilot.fixCode",
+        "title": "ClawPilot: Fix Bugs"
       },
       {
-        "command": "ollamaCopilot.generateDocs",
-        "title": "Ollama: Generate Docs"
+        "command": "clawpilot.generateDocs",
+        "title": "ClawPilot: Generate Docs"
       },
       {
-        "command": "ollamaCopilot.reviewCode",
-        "title": "Ollama: Code Review"
+        "command": "clawpilot.reviewCode",
+        "title": "ClawPilot: Code Review"
       },
       {
-        "command": "ollamaCopilot.optimizeCode",
-        "title": "Ollama: Optimize Code"
+        "command": "clawpilot.optimizeCode",
+        "title": "ClawPilot: Optimize Code"
       },
       {
-        "command": "ollamaCopilot.writeTests",
-        "title": "Ollama: Write Tests"
+        "command": "clawpilot.writeTests",
+        "title": "ClawPilot: Write Tests"
       },
       {
-        "command": "ollamaCopilot.addTypes",
-        "title": "Ollama: Add TypeScript Types"
+        "command": "clawpilot.addTypes",
+        "title": "ClawPilot: Add TypeScript Types"
       },
       {
-        "command": "ollamaCopilot.editFile",
-        "title": "Ollama: Edit File (Agent)"
+        "command": "clawpilot.editFile",
+        "title": "ClawPilot: Edit File (Agent)"
       },
       {
-        "command": "ollamaCopilot.planFeature",
-        "title": "Ollama: Plan Feature (Agent)"
+        "command": "clawpilot.planFeature",
+        "title": "ClawPilot: Plan Feature (Agent)"
       },
       {
-        "command": "ollamaCopilot.runCommand",
-        "title": "Ollama: Run Terminal Command (Agent)"
+        "command": "clawpilot.runCommand",
+        "title": "ClawPilot: Run Terminal Command (Agent)"
       },
       {
-        "command": "ollamaCopilot.selectModel",
-        "title": "Ollama: Select Model"
+        "command": "clawpilot.selectModel",
+        "title": "ClawPilot: Select Model"
       },
       {
-        "command": "ollamaCopilot.pullModel",
-        "title": "Ollama: Pull Model"
+        "command": "clawpilot.pullModel",
+        "title": "ClawPilot: Pull Model"
       },
       {
-        "command": "ollamaCopilot.reindexWorkspace",
-        "title": "Ollama: Re-index Workspace"
+        "command": "clawpilot.reindexWorkspace",
+        "title": "ClawPilot: Re-index Workspace"
       },
       {
-        "command": "ollamaCopilot.clearMemory",
-        "title": "Ollama: Clear Agent Memory"
+        "command": "clawpilot.clearMemory",
+        "title": "ClawPilot: Clear Agent Memory"
       },
       {
-        "command": "ollamaCopilot.viewMemory",
-        "title": "Ollama: View / Edit Memory"
+        "command": "clawpilot.viewMemory",
+        "title": "ClawPilot: View / Edit Memory"
       },
       {
-        "command": "ollamaCopilot.explain",
-        "title": "Ollama: Explain Selection"
+        "command": "clawpilot.explain",
+        "title": "ClawPilot: Explain Selection"
       },
       {
-        "command": "ollamaCopilot.refactor",
-        "title": "Ollama: Refactor Selection"
+        "command": "clawpilot.refactor",
+        "title": "ClawPilot: Refactor Selection"
       },
       {
-        "command": "ollamaCopilot.fix",
-        "title": "Ollama: Fix Bugs in Selection"
+        "command": "clawpilot.fix",
+        "title": "ClawPilot: Fix Bugs in Selection"
       },
       {
-        "command": "ollamaCopilot.add_tests",
-        "title": "Ollama: Add Tests for Selection"
+        "command": "clawpilot.add_tests",
+        "title": "ClawPilot: Add Tests for Selection"
       },
       {
-        "command": "ollamaCopilot.add_docs",
-        "title": "Ollama: Add Docs to Selection"
+        "command": "clawpilot.add_docs",
+        "title": "ClawPilot: Add Docs to Selection"
       },
       {
-        "command": "ollamaCopilot.codeLensAction",
-        "title": "Ollama: Code Lens Action"
+        "command": "clawpilot.codeLensAction",
+        "title": "ClawPilot: Code Lens Action"
       },
       {
-        "command": "ollamaCopilot.toggleCompletions",
-        "title": "Ollama: Toggle Inline Completions"
+        "command": "clawpilot.toggleCompletions",
+        "title": "ClawPilot: Toggle Inline Completions"
       },
       {
-        "command": "ollamaCopilot.fixDiagnostic",
-        "title": "Ollama: Fix Diagnostic"
+        "command": "clawpilot.fixDiagnostic",
+        "title": "ClawPilot: Fix Diagnostic"
       },
       {
-        "command": "ollamaCopilot.newSession",
-        "title": "Ollama: New Chat Session",
+        "command": "clawpilot.newSession",
+        "title": "ClawPilot: New Chat Session",
         "icon": "$(add)"
       },
       {
-        "command": "ollamaCopilot.switchSession",
-        "title": "Ollama: Switch Session",
+        "command": "clawpilot.switchSession",
+        "title": "ClawPilot: Switch Session",
         "icon": "$(history)"
       },
       {
-        "command": "ollamaCopilot.clearSession",
-        "title": "Ollama: Clear Current Session",
+        "command": "clawpilot.clearSession",
+        "title": "ClawPilot: Clear Current Session",
         "icon": "$(clear-all)"
       },
       {
-        "command": "ollamaCopilot.exportSession",
-        "title": "Ollama: Export Session to Markdown",
+        "command": "clawpilot.exportSession",
+        "title": "ClawPilot: Export Session to Markdown",
         "icon": "$(export)"
       },
       {
-        "command": "ollamaCopilot.askGitStatus",
-        "title": "Ollama: Summarise Git Status"
+        "command": "clawpilot.askGitStatus",
+        "title": "ClawPilot: Summarise Git Status"
+        },
+        {
+          "command": "clawpilot.toggleProxy",
+          "title": "ClawPilot: Toggle Local Proxy"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "ollamaCopilot",
-          "title": "Ollama Copilot",
+          "id": "clawpilot",
+          "title": "ClawPilot",
           "icon": "media/sidebar-icon.svg"
         }
       ]
     },
     "views": {
-      "ollamaCopilot": [
+      "clawpilot": [
         {
           "type": "webview",
-          "id": "ollamaCopilot.chatView",
+          "id": "clawpilot.chatView",
           "name": "Chat"
         }
       ]
@@ -186,190 +190,213 @@
     "menus": {
       "view/title": [
         {
-          "command": "ollamaCopilot.newSession",
-          "when": "view == ollamaCopilot.chatView",
+          "command": "clawpilot.newSession",
+          "when": "view == clawpilot.chatView",
           "group": "navigation@1"
         },
         {
-          "command": "ollamaCopilot.switchSession",
-          "when": "view == ollamaCopilot.chatView",
+          "command": "clawpilot.switchSession",
+          "when": "view == clawpilot.chatView",
           "group": "navigation@2"
         },
         {
-          "command": "ollamaCopilot.clearSession",
-          "when": "view == ollamaCopilot.chatView",
+          "command": "clawpilot.clearSession",
+          "when": "view == clawpilot.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "ollamaCopilot.exportSession",
-          "when": "view == ollamaCopilot.chatView",
+          "command": "clawpilot.exportSession",
+          "when": "view == clawpilot.chatView",
           "group": "navigation@4"
         }
       ],
       "editor/context": [
         {
-          "command": "ollamaCopilot.explain",
+          "command": "clawpilot.explain",
           "when": "editorHasSelection",
           "group": "ollama@1"
         },
         {
-          "command": "ollamaCopilot.refactor",
+          "command": "clawpilot.refactor",
           "when": "editorHasSelection",
           "group": "ollama@2"
         },
         {
-          "command": "ollamaCopilot.fix",
+          "command": "clawpilot.fix",
           "when": "editorHasSelection",
           "group": "ollama@3"
         },
         {
-          "command": "ollamaCopilot.add_tests",
+          "command": "clawpilot.add_tests",
           "when": "editorHasSelection",
           "group": "ollama@4"
         },
         {
-          "command": "ollamaCopilot.add_docs",
+          "command": "clawpilot.add_docs",
           "when": "editorHasSelection",
           "group": "ollama@5"
         },
         {
-          "command": "ollamaCopilot.explainCode",
+          "command": "clawpilot.explainCode",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@1"
+          "group": "clawpilot@1"
         },
         {
-          "command": "ollamaCopilot.fixCode",
+          "command": "clawpilot.fixCode",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@2"
+          "group": "clawpilot@2"
         },
         {
-          "command": "ollamaCopilot.refactorCode",
+          "command": "clawpilot.refactorCode",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@3"
+          "group": "clawpilot@3"
         },
         {
-          "command": "ollamaCopilot.reviewCode",
+          "command": "clawpilot.reviewCode",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@4"
+          "group": "clawpilot@4"
         },
         {
-          "command": "ollamaCopilot.writeTests",
+          "command": "clawpilot.writeTests",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@5"
+          "group": "clawpilot@5"
         },
         {
-          "command": "ollamaCopilot.generateDocs",
+          "command": "clawpilot.generateDocs",
           "when": "editorHasSelection",
-          "group": "ollamaCopilot@6"
+          "group": "clawpilot@6"
         },
         {
-          "command": "ollamaCopilot.editFile",
+          "command": "clawpilot.editFile",
           "when": "editorIsOpen",
-          "group": "ollamaCopilot@7"
+          "group": "clawpilot@7"
         }
       ],
       "editor/title": [
         {
-          "command": "ollamaCopilot.editFile",
+          "command": "clawpilot.editFile",
           "when": "editorIsOpen",
           "group": "navigation"
         }
       ]
     },
     "configuration": {
-      "title": "Ollama Copilot",
+      "title": "ClawPilot",
       "properties": {
-        "ollamaCopilot.endpoint": {
+        "clawpilot.endpoint": {
           "type": "string",
           "default": "http://localhost:11434",
           "description": "Ollama server endpoint URL"
         },
-        "ollamaCopilot.model": {
+        "clawpilot.model": {
           "type": "string",
           "default": "llama3",
           "description": "Model to use for chat, agent mode, and completions"
         },
-        "ollamaCopilot.agentMode": {
+        "clawpilot.agentMode": {
           "type": "boolean",
           "default": true,
           "description": "Enable agent mode by default (allows file editing, terminal access, and multi-step task execution)"
         },
-        "ollamaCopilot.enableInlineCompletion": {
+        "clawpilot.enableInlineCompletion": {
           "type": "boolean",
           "default": true,
           "description": "Enable Copilot-style inline code completions"
         },
-        "ollamaCopilot.codeLensEnabled": {
+        "clawpilot.codeLensEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show Ollama Code Lens above functions and classes."
+          "description": "Show ClawPilot Code Lens above functions and classes."
         },
-        "ollamaCopilot.inlineCompletionsEnabled": {
+        "clawpilot.inlineCompletionsEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show Ollama ghost-text inline completions as you type."
+          "description": "Show ClawPilot ghost-text inline completions as you type."
         },
-        "ollamaCopilot.completionDebounceMs": {
+        "clawpilot.completionDebounceMs": {
           "type": "number",
           "default": 600,
           "description": "Debounce delay (ms) before requesting an inline completion"
         },
-        "ollamaCopilot.maxTokens": {
+        "clawpilot.maxTokens": {
           "type": "number",
           "default": 2048,
           "description": "Maximum tokens for chat responses (completions use a separate lower limit)"
         },
-        "ollamaCopilot.completionMaxTokens": {
+        "clawpilot.completionMaxTokens": {
           "type": "number",
           "default": 256,
           "description": "Maximum tokens for inline completions"
         },
-        "ollamaCopilot.systemPrompt": {
+        "clawpilot.systemPrompt": {
           "type": "string",
           "default": "You are an expert coding assistant. Be concise, accurate, and helpful.",
           "description": "Custom system prompt for chat mode (agent mode uses its own system prompt)"
         },
-        "ollamaCopilot.agentMaxIterations": {
+        "clawpilot.agentMaxIterations": {
           "type": "number",
           "default": 15,
           "description": "Maximum tool-call iterations before agent stops"
         },
-        "ollamaCopilot.embeddingModel": {
+        "clawpilot.embeddingModel": {
           "type": "string",
           "default": "nomic-embed-text",
           "description": "Ollama embedding model for RAG (e.g. nomic-embed-text). If not available, keyword (BM25) fallback is used."
         },
-        "ollamaCopilot.ragEnabled": {
+        "clawpilot.ragEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable workspace RAG: inject relevant code context into chat from semantic search"
         },
-        "ollamaCopilot.ragTopK": {
+        "clawpilot.ragTopK": {
           "type": "number",
           "default": 5,
           "description": "Number of top code chunks to inject into the prompt from RAG"
         },
-        "ollamaCopilot.memoryEnabled": {
+        "clawpilot.ragHybridAlpha": {
+          "type": "number",
+          "default": 0.6,
+          "description": "Hybrid RAG scoring: weight for vector similarity (0-1). Score = alpha * vectorScore + (1-alpha) * normalizedBM25. 0.6 = 60% vector, 40% keyword."
+        },
+        "clawpilot.fallbackModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Ordered list of fallback Ollama models to try if the primary model fails"
+        },
+        "clawpilot.proxyEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the local ClawPilot proxy that exposes an OpenAI-compatible completion/chat API on a configurable port"
+        },
+        "clawpilot.proxyPort": {
+          "type": "number",
+          "default": 11435,
+          "description": "Port for the ClawPilot local proxy server (OpenAI-compatible API). Restart VS Code or toggle the proxy to apply changes."
+        },
+        "clawpilot.memoryEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable persistent memory across sessions (core, recall, archival)"
         },
-        "ollamaCopilot.autoSaveMemory": {
+        "clawpilot.autoSaveMemory": {
           "type": "boolean",
           "default": true,
           "description": "Automatically save conversation summaries to recall memory"
         },
-        "ollamaCopilot.recallTopK": {
+        "clawpilot.recallTopK": {
           "type": "number",
           "default": 3,
           "description": "Number of recall memory entries to inject per message"
         },
-        "ollamaCopilot.reflexionMaxRetries": {
+        "clawpilot.reflexionMaxRetries": {
           "type": "number",
           "default": 3,
           "description": "Maximum self-correction retries when a tool call fails (Reflexion loop). Set to 0 to disable."
         },
-        "ollamaCopilot.diffPreviewEnabled": {
+        "clawpilot.diffPreviewEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Show a diff preview before the agent applies file changes."
@@ -378,30 +405,30 @@
     },
     "keybindings": [
       {
-        "command": "ollamaCopilot.openChat",
+        "command": "clawpilot.openChat",
         "key": "ctrl+shift+o",
         "mac": "cmd+shift+o"
       },
       {
-        "command": "ollamaCopilot.explainCode",
+        "command": "clawpilot.explainCode",
         "key": "ctrl+shift+e",
         "mac": "cmd+shift+e",
         "when": "editorHasSelection"
       },
       {
-        "command": "ollamaCopilot.fixCode",
+        "command": "clawpilot.fixCode",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
         "when": "editorHasSelection"
       },
       {
-        "command": "ollamaCopilot.editFile",
+        "command": "clawpilot.editFile",
         "key": "ctrl+shift+i",
         "mac": "cmd+shift+i",
         "when": "editorIsOpen"
       },
       {
-        "command": "ollamaCopilot.planFeature",
+        "command": "clawpilot.planFeature",
         "key": "ctrl+shift+p",
         "mac": "cmd+shift+p"
       }
