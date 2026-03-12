@@ -304,6 +304,7 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
 <div class="topbar">
   <span class="status-dot" id="statusDot"></span>
   <button class="provider-btn" id="providerBadge" title="Change provider">ClawPilot</button>
+  <span style="font-size:9px;opacity:.45;flex-shrink:0">v2</span>
   <button class="icon-btn" id="setupBtn" title="Settings">&#9881;</button>
   <button class="icon-btn" id="newSessionBtn" title="New chat">&#43;</button>
 </div>
@@ -359,21 +360,18 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
     </div>
   </div>
 </div>
-<!-- Popups (above input) -->
-<div class="input-wrap">
-  <div class="popup" id="slashPop"></div>
-  <div class="popup" id="filePop"></div>
-  <div class="popup" id="cmdMenu"></div>
-  <div class="mention-pop" id="mentionPop"></div>
-</div>
 <!-- Context usage bar -->
 <div class="ctx-bar">
   <div class="ctx-track"><div class="ctx-fill" id="ctxFill"></div></div>
   <span class="ctx-label" id="ctxLabel">0 tokens</span>
   <span class="sel-pill" id="selBadge">&#128206; <span id="selLabel">selection</span></span>
 </div>
-<!-- Input -->
-<div class="input-area">
+<!-- Input + Popups (popups positioned relative to input-area) -->
+<div class="input-area" style="position:relative">
+  <div class="popup" id="slashPop"></div>
+  <div class="popup" id="filePop"></div>
+  <div class="popup" id="cmdMenu"></div>
+  <div class="mention-pop" id="mentionPop"></div>
   <div class="input-box">
     <textarea id="msgInput" placeholder="Ask anything...  / commands  @ files" rows="1"></textarea>
     <button class="stop-btn" id="stopBtn" title="Stop generation">&#9632; Stop</button>
