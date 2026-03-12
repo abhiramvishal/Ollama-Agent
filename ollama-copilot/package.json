@@ -214,27 +214,27 @@
         {
           "command": "clawpilot.explain",
           "when": "editorHasSelection",
-          "group": "ollama@1"
+          "group": "clawpilot@1"
         },
         {
           "command": "clawpilot.refactor",
           "when": "editorHasSelection",
-          "group": "ollama@2"
+          "group": "clawpilot@2"
         },
         {
           "command": "clawpilot.fix",
           "when": "editorHasSelection",
-          "group": "ollama@3"
+          "group": "clawpilot@3"
         },
         {
           "command": "clawpilot.add_tests",
           "when": "editorHasSelection",
-          "group": "ollama@4"
+          "group": "clawpilot@4"
         },
         {
           "command": "clawpilot.add_docs",
           "when": "editorHasSelection",
-          "group": "ollama@5"
+          "group": "clawpilot@5"
         },
         {
           "command": "clawpilot.explainCode",
