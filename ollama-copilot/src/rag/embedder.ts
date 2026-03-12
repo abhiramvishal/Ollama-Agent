@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import type { ProviderType } from '../providers/llmProvider';
+import { PROVIDER_DEFAULT_PORTS } from '../providers/llmProvider';
 
 const BATCH_SIZE = 10;
 const TIMEOUT_MS = 15000;
@@ -8,8 +10,18 @@ interface EmbedResponse {
   embedding?: number[];
 }
 
+const ENDPOINT_CONFIG_KEYS: Partial<Record<ProviderType, string>> = {
+  lmstudio: 'lmstudioEndpoint',
+  llamafile: 'llamafileEndpoint',
+  vllm: 'vllmEndpoint',
+  localai: 'localaiEndpoint',
+  jan: 'janEndpoint',
+  'textgen-webui': 'textgenEndpoint',
+  'openai-compatible': 'endpoint',
+};
+
 /**
- * Generate embeddings via Ollama /api/embed.
+ * Generate embeddings via Ollama /api/embed or OpenAI-compatible /v1/embeddings.
  * Cache by chunk id. Vectors are normalized so similarity = dot product.
  */
 export class Embedder {
@@ -21,8 +33,20 @@ export class Embedder {
     this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
-  private get endpoint(): string {
-    const base = this._config.get<string>('endpoint', 'http://localhost:11434');
+  private get _provider(): ProviderType {
+    return this._config.get<string>('provider', 'ollama') as ProviderType;
+  }
+
+  private get _endpoint(): string {
+    const provider = this._provider;
+    if (provider === 'ollama') {
+      const base = this._config.get<string>('endpoint', 'http://localhost:11434');
+      return base.replace(/\/$/, '');
+    }
+    const key = ENDPOINT_CONFIG_KEYS[provider] ?? 'endpoint';
+    let base = this._config.get<string>(key, '');
+    if (!base && key !== 'endpoint') base = this._config.get<string>('endpoint', '');
+    if (!base) base = `http://localhost:${PROVIDER_DEFAULT_PORTS[provider]}`;
     return base.replace(/\/$/, '');
   }
 
@@ -34,21 +58,34 @@ export class Embedder {
     this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
-  /** Check if embedding model is available (one-time probe, then cached). */
+  /** Check if embedding model is available (one-time probe, then cached). Tries Ollama and OpenAI formats. */
   async isAvailable(): Promise<boolean> {
     if (this._available !== null) return this._available;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    const endpoint = this._endpoint;
+    const useOpenAI = this._provider !== 'ollama';
     try {
-      const res = await fetch(`${this.endpoint}/api/embed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.model, input: 'test' }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      this._available = res.ok;
-      return this._available;
+      if (useOpenAI) {
+        const res = await fetch(`${endpoint}/v1/embeddings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: this.model, input: 'test' }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        this._available = res.ok;
+      } else {
+        const res = await fetch(`${endpoint}/api/embed`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: this.model, input: 'test' }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        this._available = res.ok;
+      }
+      return this._available!;
     } catch {
       clearTimeout(timeout);
       this._available = false;
@@ -83,25 +120,58 @@ export class Embedder {
       return this._cache.get(cacheKey)!;
     }
     this.refreshConfig();
+    const useOpenAI = this._provider !== 'ollama';
+    const vec = useOpenAI
+      ? await this._embedOpenAI([text], this.model).then(r => r[0])
+      : await this._embedOllama([text], this.model).then(r => r[0]);
+    const normalized = Embedder.normalize(vec);
+    if (cacheKey) this._cache.set(cacheKey, normalized);
+    return normalized;
+  }
+
+  private async _embedOllama(texts: string[], model: string): Promise<number[][]> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const res = await fetch(`${this.endpoint}/api/embed`, {
+      const res = await fetch(`${this._endpoint}/api/embed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.model, input: text }),
+        body: JSON.stringify({ model, input: texts.length === 1 ? texts[0] : texts }),
         signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!res.ok) {
         const t = await res.text();
         throw new Error(`Embed failed: ${res.status} ${t}`);
       }
       const data = (await res.json()) as EmbedResponse;
-      const vec = data.embedding ?? data.embeddings?.[0];
-      if (!Array.isArray(vec)) throw new Error('Invalid embed response');
-      const normalized = Embedder.normalize(vec);
-      if (cacheKey) this._cache.set(cacheKey, normalized);
-      return normalized;
+      const vectors = data.embeddings ?? (data.embedding ? [data.embedding] : []);
+      if (vectors.length !== texts.length) throw new Error('Invalid embed response');
+      return vectors;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async _embedOpenAI(texts: string[], model: string): Promise<number[][]> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(`${this._endpoint}/v1/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: texts.length === 1 ? texts[0] : texts }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Embed failed: ${res.status} ${t}`);
+      }
+      const data = (await res.json()) as { data?: Array<{ embedding: number[] }> };
+      const list = data.data ?? [];
+      if (list.length !== texts.length) throw new Error('Invalid embed response');
+      return list.map(d => d.embedding);
     } finally {
       clearTimeout(timeout);
     }
@@ -121,36 +191,19 @@ export class Embedder {
         toFetch.push({ text: texts[i], id: chunkIds[i], index: i });
       }
     }
+    this.refreshConfig();
+    const useOpenAI = this._provider !== 'ollama';
+    const model = this.model;
     for (let b = 0; b < toFetch.length; b += BATCH_SIZE) {
       const batch = toFetch.slice(b, b + BATCH_SIZE);
       const inputs = batch.map(x => x.text);
-      this.refreshConfig();
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS * 2);
-      try {
-        const res = await fetch(`${this.endpoint}/api/embed`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: this.model, input: inputs }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error(`Embed batch failed: ${res.status} ${t}`);
-        }
-        const data = (await res.json()) as EmbedResponse;
-        const vectors = data.embeddings ?? (data.embedding ? [data.embedding] : []);
-        for (let j = 0; j < batch.length; j++) {
-          const vec = vectors[j];
-          if (!Array.isArray(vec)) throw new Error('Invalid embed batch response');
-          const normalized = Embedder.normalize(vec);
-          const id = batch[j].id;
-          this._cache.set(id, normalized);
-          results[batch[j].index] = normalized;
-        }
-      } finally {
-        clearTimeout(timeout);
+      const vectors = useOpenAI
+        ? await this._embedOpenAI(inputs, model)
+        : await this._embedOllama(inputs, model);
+      for (let j = 0; j < batch.length; j++) {
+        const normalized = Embedder.normalize(vectors[j]);
+        this._cache.set(batch[j].id, normalized);
+        results[batch[j].index] = normalized;
       }
     }
     return results;

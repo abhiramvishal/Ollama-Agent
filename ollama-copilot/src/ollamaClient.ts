@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
+import type { LLMProvider, ProviderType, ChatMessage as LLMChatMessage, ModelInfo } from './providers/llmProvider';
 
-export interface OllamaModel {
+export type { ChatMessage } from './providers/llmProvider';
+
+export interface OllamaModel extends ModelInfo {
   name: string;
   modified_at: string;
   size: number;
@@ -52,14 +55,9 @@ interface TagsResponse {
   models: OllamaModel[];
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
 interface ChatRequest {
   model: string;
-  messages: ChatMessage[];
+  messages: LLMChatMessage[];
   stream: boolean;
   options?: { num_predict?: number };
 }
@@ -78,16 +76,22 @@ interface PullRequest {
 
 const TIMEOUT_MS = 3000;
 
-export class OllamaClient {
+export class OllamaClient implements LLMProvider {
+  readonly providerType: ProviderType = 'ollama';
+  readonly displayName = 'Ollama';
   private _config: vscode.WorkspaceConfiguration;
 
   constructor() {
     this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
-  private get endpoint(): string {
+  get baseEndpoint(): string {
     const base = this._config.get<string>('endpoint', 'http://localhost:11434');
     return base.replace(/\/$/, '');
+  }
+
+  private get endpoint(): string {
+    return this.baseEndpoint;
   }
 
   refreshConfig(): void {
@@ -155,7 +159,7 @@ export class OllamaClient {
   }
 
   async *streamChat(
-    messages: ChatMessage[],
+    messages: LLMChatMessage[],
     model: string,
     maxTokens?: number
   ): AsyncGenerator<string> {
@@ -217,7 +221,7 @@ export class OllamaClient {
    * Emits an informational chunk when switching models.
    */
   async *streamChatWithFallback(
-    messages: ChatMessage[],
+    messages: LLMChatMessage[],
     primaryModel: string,
     fallbackModels: string[],
     maxTokens?: number

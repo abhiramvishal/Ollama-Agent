@@ -1,6 +1,6 @@
 import * as http from 'http';
 import * as vscode from 'vscode';
-import { OllamaClient, ChatMessage } from '../ollamaClient';
+import type { LLMProvider, ChatMessage } from '../providers/llmProvider';
 
 interface OpenAIChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -15,7 +15,7 @@ export class ClawProxy {
   private server: http.Server | null = null;
   private currentPort: number | null = null;
 
-  constructor(private readonly client: OllamaClient) {}
+  constructor(private readonly client: LLMProvider) {}
 
   async start(): Promise<number> {
     if (this.server) {
@@ -184,8 +184,8 @@ export class ClawProxy {
       const data = models.map(m => ({
         id: m.name,
         object: 'model',
-        created: Math.floor(new Date(m.modified_at).getTime() / 1000),
-        owned_by: 'ollama',
+        created: m.modified_at ? Math.floor(new Date(m.modified_at).getTime() / 1000) : 0,
+        owned_by: this.client.providerType,
       }));
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');

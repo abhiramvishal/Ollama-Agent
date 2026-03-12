@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { OllamaClient, ChatMessage } from './ollamaClient';
+import type { LLMProvider } from './providers/llmProvider';
+import type { ChatMessage } from './providers/llmProvider';
 import { AgentTools, ToolResult } from './tools/agentTools';
 import type { FileDiff } from './diff/diffEngine';
 import { ReflectionEngine } from './reflexion/reflectionEngine';
@@ -65,12 +66,12 @@ const DIFF_TIMEOUT_MS = 5 * 60 * 1000;
 
 export class AgentRunner {
     private tools: AgentTools;
-    private client: OllamaClient;
+    private client: LLMProvider;
     private _maxReflections: number;
     private _pendingDiffs = new Map<string, (approved: boolean) => void>();
     private _stopRequested = false;
 
-    constructor(client: OllamaClient, tools?: AgentTools, maxReflections?: number) {
+    constructor(client: LLMProvider, tools?: AgentTools, maxReflections?: number) {
         this.client = client;
         this.tools = tools ?? new AgentTools();
         this._maxReflections = maxReflections ?? 3;

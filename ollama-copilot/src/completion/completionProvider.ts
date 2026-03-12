@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from '../ollamaClient';
+import type { LLMProvider } from '../providers/llmProvider';
 
 const DEBOUNCE_MS = 300;
 const PREFIX_LINES = 40;   // lines before cursor to send as context
@@ -7,19 +7,23 @@ const SUFFIX_LINES = 10;   // lines after cursor to send as context
 const MAX_TOKENS = 80;     // stop collecting once we have this many non-whitespace tokens
 
 export class OllamaCompletionProvider implements vscode.InlineCompletionItemProvider {
-  private _client: OllamaClient;
+  private _client: LLMProvider;
   private _model: string;
   private _debounceTimer: NodeJS.Timeout | undefined;
   private _pendingCancel: vscode.CancellationTokenSource | undefined;
   private _pendingResolve: ((v: vscode.InlineCompletionList | null) => void) | undefined;
 
-  constructor(client: OllamaClient, model: string) {
+  constructor(client: LLMProvider, model: string) {
     this._client = client;
     this._model = model;
   }
 
   updateModel(model: string): void {
     this._model = model;
+  }
+
+  setClient(client: LLMProvider): void {
+    this._client = client;
   }
 
   provideInlineCompletionItems(

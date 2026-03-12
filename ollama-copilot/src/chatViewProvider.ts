@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { OllamaClient, ChatMessage } from './ollamaClient';
+import type { LLMProvider, ChatMessage } from './providers/llmProvider';
 import { AgentRunner, AgentStep } from './agentRunner';
 import { AgentTools } from './tools/agentTools';
 import { renderMarkdownToHtml } from './utils';
@@ -17,7 +17,7 @@ import { resolveMention } from './mentions/mentionResolver';
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'clawpilot.chatView';
     private _view?: vscode.WebviewView;
-    private _client: OllamaClient;
+    private _client: LLMProvider;
     private _workspaceIndex: WorkspaceIndex;
     private _memoryStore: MemoryStore;
     private _skillStore: SkillStore;
@@ -31,7 +31,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        client: OllamaClient,
+        client: LLMProvider,
         workspaceIndex: WorkspaceIndex,
         memoryStore: MemoryStore,
         skillStore: SkillStore
@@ -42,6 +42,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._skillStore = skillStore;
         const maxRetries = vscode.workspace.getConfiguration('clawpilot').get<number>('reflexionMaxRetries', 3);
         this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex, memoryStore, skillStore), maxRetries);
+    }
+
+    setClient(client: LLMProvider): void {
+        this._client = client;
+        const maxRetries = vscode.workspace.getConfiguration('clawpilot').get<number>('reflexionMaxRetries', 3);
+        this._agentRunner = new AgentRunner(client, new AgentTools(this._workspaceIndex, this._memoryStore, this._skillStore), maxRetries);
     }
 
     resolveWebviewView(

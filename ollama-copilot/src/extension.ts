@@ -1,4 +1,8 @@
 import * as vscode from 'vscode';
+import type { LLMProvider } from './providers/llmProvider';
+import { createProvider, autoDetectProvider } from './providers/providerManager';
+import { PROVIDER_DISPLAY_NAMES } from './providers/llmProvider';
+import type { ProviderType } from './providers/llmProvider';
 import { OllamaClient, KNOWN_MODELS } from './ollamaClient';
 import { OllamaCompletionProvider } from './completion/completionProvider';
 import { CompletionStatusBar } from './completion/completionStatusBar';
@@ -30,9 +34,10 @@ let workspaceIndex: WorkspaceIndex;
 let memoryStore: MemoryStore;
 let skillStore: SkillStore;
 let proxy: ClawProxy | undefined;
+let client: LLMProvider;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    const client = new OllamaClient();
+    client = createProvider();
     workspaceIndex = new WorkspaceIndex();
     workspaceIndex.startWatching();
     context.subscriptions.push({ dispose: () => workspaceIndex.dispose() });
@@ -371,6 +376,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
+    // Provider selection
+    context.subscriptions.push(
+        vscode.commands.registerCommand('clawpilot.selectProvider', async () => {
+            const items: vscode.QuickPickItem[] = (Object.entries(PROVIDER_DISPLAY_NAMES) as [ProviderType, string][]).map(([type, label]) => ({
+                label,
+                detail: type
+            }));
+            const picked = await vscode.window.showQuickPick(items, {
+                matchOnDescription: true,
+                placeHolder: 'Select LLM provider'
+            });
+            if (!picked?.detail) return;
+            await vscode.workspace.getConfiguration('clawpilot')
+                .update('provider', picked.detail, vscode.ConfigurationTarget.Global);
+            client = createProvider();
+            chatProvider.setClient(client);
+            completionProvider.setClient(client);
+            updateStatusBar(client);
+            vscode.window.showInformationMessage(`ClawPilot: Using ${client.displayName}.`);
+        })
+    );
+
     // Model management
     context.subscriptions.push(
         vscode.commands.registerCommand('clawpilot.selectModel', async () => {
@@ -387,27 +414,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     label: `$(check) ${m.name}`,
                     description: 'Installed',
                     detail: m.name
-                })),
-                {
+                }))
+            ];
+            if (client.pullModel) {
+                items.push({
                     label: '$(package) Available to pull',
                     kind: vscode.QuickPickItemKind.Separator
-                },
-                ...KNOWN_MODELS.filter(m => !installedSet.has(m.name)).map(m => ({
+                });
+                items.push(...KNOWN_MODELS.filter(m => !installedSet.has(m.name)).map(m => ({
                     label: m.label,
                     description: m.category,
                     detail: m.name
-                }))
-            ];
+                })));
+            }
 
             const picked = await vscode.window.showQuickPick(items, {
                 matchOnDescription: true,
                 matchOnDetail: true,
-                placeHolder: 'Select or pull a model'
+                placeHolder: client.pullModel ? 'Select or pull a model' : 'Select model'
             });
             if (picked?.detail) {
                 const name = picked.detail;
-                if (!installedSet.has(name)) {
-                    await pullModelWithProgress(client, name);
+                if (client.pullModel && !installedSet.has(name)) {
+                    await pullModelWithProgress(client as OllamaClient, name);
                 }
                 await vscode.workspace.getConfiguration('clawpilot')
                     .update('model', name, vscode.ConfigurationTarget.Global);
@@ -461,6 +490,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     context.subscriptions.push(
         vscode.commands.registerCommand('clawpilot.pullModel', async () => {
+            if (!client.pullModel) {
+                vscode.window.showInformationMessage('Pull model is only available for the Ollama provider.');
+                return;
+            }
             const items = KNOWN_MODELS.map(m => ({
                 label: m.label,
                 description: m.category,
@@ -472,7 +505,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             });
             if (!picked?.detail) { return; }
             const name = picked.detail;
-            await pullModelWithProgress(client, name);
+            await pullModelWithProgress(client as OllamaClient, name);
             await vscode.workspace.getConfiguration('clawpilot')
                 .update('model', name, vscode.ConfigurationTarget.Global);
             updateStatusBar(client, name);
@@ -527,17 +560,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
     }
 
+    // Auto-detect provider if configured and current provider unavailable
+    const autoDetect = initialConfig.get<boolean>('autoDetectProvider', false);
+    if (autoDetect) {
+        const available = await client.isAvailable();
+        if (!available) {
+            const detected = await autoDetectProvider();
+            if (detected) {
+                client = detected;
+                chatProvider.setClient(client);
+                completionProvider.setClient(client);
+                updateStatusBar(client);
+                vscode.window.setStatusBarMessage(`ClawPilot: Auto-detected ${client.displayName}. Using it for this session.`, 8000);
+            }
+        }
+    }
+
     // Startup health check
     client.isAvailable().then(available => {
         if (!available) {
-            vscode.window.showWarningMessage(
-                'ClawPilot: Server not found. Install Ollama and run `ollama serve`.',
-                'Get Ollama'
-            ).then(choice => {
-                if (choice === 'Get Ollama') {
-                    vscode.env.openExternal(vscode.Uri.parse('https://ollama.com'));
-                }
-            });
+            if (client.providerType === 'ollama') {
+                vscode.window.showWarningMessage(
+                    'ClawPilot: Server not found. Install Ollama and run `ollama serve`.',
+                    'Get Ollama'
+                ).then(choice => {
+                    if (choice === 'Get Ollama') {
+                        vscode.env.openExternal(vscode.Uri.parse('https://ollama.com'));
+                    }
+                });
+            } else {
+                vscode.window.showWarningMessage(
+                    `ClawPilot: ${client.displayName} not found at ${client.baseEndpoint}.`
+                );
+            }
         } else {
             const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
             updateStatusBar(client, model);
@@ -551,6 +606,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
                 updateStatusBar(client, model);
                 completionProvider.updateModel(model || 'llama3');
+            }
+            if (e.affectsConfiguration('clawpilot.provider')) {
+                client = createProvider();
+                chatProvider.setClient(client);
+                completionProvider.setClient(client);
+                updateStatusBar(client);
             }
         })
     );
@@ -568,6 +629,7 @@ function runSlashOnSelection(slash: string): void {
 }
 
 async function pullModelWithProgress(client: OllamaClient, name: string): Promise<void> {
+    if (!client.pullModel) return;
     try {
         await vscode.window.withProgress(
             {
@@ -585,9 +647,10 @@ async function pullModelWithProgress(client: OllamaClient, name: string): Promis
     }
 }
 
-function updateStatusBar(client: OllamaClient, model?: string): void {
-    const m = model || vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
-    statusBarItem.text = m ? `$(claw) ClawPilot: ${m}` : '$(claw) ClawPilot';
+function updateStatusBar(client: LLMProvider, model?: string): void {
+    const m = model ?? vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
+    const providerLabel = client.displayName;
+    statusBarItem.text = m ? `$(claw) ClawPilot [${providerLabel}]: ${m}` : `$(claw) ClawPilot [${providerLabel}]`;
     statusBarItem.tooltip = 'ClawPilot — click to open chat';
 }
 
