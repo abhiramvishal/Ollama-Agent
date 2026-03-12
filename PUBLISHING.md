@@ -52,7 +52,7 @@ To test the build without publishing, push to **main** or **master**, or go to *
 
 ## Builds not running?
 
-This repo has the extension in **ollama-copilot/** with the repo root one level up. Workflows live in **.github/** at the repo root (the parent of `ollama-copilot`) and use `working-directory: ollama-copilot`. Do not add a `.github` inside `ollama-copilot`—GitHub only runs workflows from the root.
+This repo uses a **single main folder**: the repo root is the extension (package.json, src, etc.). Workflows in **.github/workflows/** run from the repo root with no subfolder.
 
 CI triggers on **main** and **master**. If your default branch is different, push to main/master or run **Actions → CI → Run workflow** manually.
 
@@ -66,7 +66,7 @@ npx @vscode/vsce publish -p YOUR_PAT
 
 ## Repo structure
 
-The repo root is the **parent** of `ollama-copilot` (e.g. `Ollama-Agent`). The root contains `.github/workflows/` and the `ollama-copilot/` folder. The workflows are already set up with `working-directory: ollama-copilot`.
+The repo root **is** the extension: it contains `package.json`, `src/`, `.github/workflows/`, and the rest of the project. There is no nested extension subfolder; CI and Publish run from the root.
 
 ## Links
 
