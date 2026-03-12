@@ -41,6 +41,9 @@ export function computeDiff(oldText: string, newText: string): DiffLine[] {
       if (contextCount < CONTEXT_LINES) {
         out.push({ type: 'context', content: oldLines[i] ?? '', lineNo: i + 1 });
         contextCount++;
+      } else if (contextCount === CONTEXT_LINES) {
+        out.push({ type: 'context', content: '...' });
+        contextCount++;
       }
       i++;
       j++;

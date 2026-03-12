@@ -1,5 +1,11 @@
 import * as vscode from 'vscode';
 
+const CODE_LANGS = new Set([
+  'typescript', 'javascript', 'typescriptreact', 'javascriptreact',
+  'python', 'go', 'rust', 'java', 'c', 'cpp', 'csharp', 'php', 'ruby',
+  'swift', 'kotlin', 'scala', 'lua', 'r', 'dart'
+]);
+
 function getDeclRegex(languageId: string): RegExp | null {
   const lang = languageId.toLowerCase();
   if (lang === 'typescript' || lang === 'javascript' || lang === 'ts' || lang === 'js') {
@@ -14,7 +20,10 @@ function getDeclRegex(languageId: string): RegExp | null {
   if (lang === 'rust' || lang === 'rs') {
     return /^\s*(pub\s+)?fn\s+\w+|^\s*(pub\s+)?struct\s+\w+/;
   }
-  return /^\s*(function|class|def|func|fn)\s+\w+/;
+  if (CODE_LANGS.has(lang)) {
+    return /^\s*(function|class|def|func|fn)\s+\w+/;
+  }
+  return null;
 }
 
 export class OllamaCodeLensProvider implements vscode.CodeLensProvider {

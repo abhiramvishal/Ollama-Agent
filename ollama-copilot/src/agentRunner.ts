@@ -75,6 +75,14 @@ export class AgentRunner {
         this._maxReflections = maxReflections ?? 3;
     }
 
+    private async _revertFile(path: string, content: string): Promise<void> {
+        await this.tools.executeTool('write_file', { path, content });
+    }
+
+    private async _deleteFile(path: string): Promise<void> {
+        await this.tools.executeTool('delete_file', { path });
+    }
+
     resolveDiff(stepId: string, approved: boolean): void {
         const resolve = this._pendingDiffs.get(stepId);
         if (resolve) {
@@ -190,9 +198,9 @@ export class AgentRunner {
                         const d = result.diff;
                         filesTouched.delete(d.path);
                         if (d.isNew) {
-                            await this.tools.executeTool('delete_file', { path: d.path });
+                            await this._deleteFile(d.path);
                         } else {
-                            await this.tools.executeTool('write_file', { path: d.path, content: d.oldContent });
+                            await this._revertFile(d.path, d.oldContent);
                         }
                         history.push({ role: 'assistant', content: fullResponse });
                         history.push({

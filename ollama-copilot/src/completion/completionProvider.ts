@@ -11,6 +11,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
   private _model: string;
   private _debounceTimer: NodeJS.Timeout | undefined;
   private _pendingCancel: vscode.CancellationTokenSource | undefined;
+  private _pendingResolve: ((v: vscode.InlineCompletionList | null) => void) | undefined;
 
   constructor(client: OllamaClient, model: string) {
     this._client = client;
@@ -36,10 +37,14 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
     token.onCancellationRequested(() => cts.cancel());
 
     return new Promise((resolve) => {
-      // Clear existing debounce timer
+      // Resolve the previous pending promise with null before replacing it
+      this._pendingResolve?.(null);
+      this._pendingResolve = resolve;
+
       if (this._debounceTimer) clearTimeout(this._debounceTimer);
 
       this._debounceTimer = setTimeout(async () => {
+        this._pendingResolve = undefined;
         if (cts.token.isCancellationRequested) { resolve(null); return; }
 
         // Check config each time (user may toggle)
