@@ -12,9 +12,11 @@ export class ContextRegistry {
     this._providers.push(provider);
   }
 
-  async assemble(query: string, totalBudget: number): Promise<string> {
+  /** Assemble context from providers; returns text and the list of source names that contributed. */
+  async assemble(query: string, totalBudget: number): Promise<{ text: string; sources: string[] }> {
     const sorted = [...this._providers].sort((a, b) => b.priority - a.priority);
     const parts: string[] = [];
+    const sources: string[] = [];
     let used = 0;
 
     for (const provider of sorted) {
@@ -31,12 +33,13 @@ export class ContextRegistry {
         }
         const wrapped = `<context_source name="${provider.name}">\n${raw}\n</context_source>`;
         parts.push(wrapped);
+        sources.push(provider.name);
         used += wrapped.length;
       } catch {
         // Skip failed provider
       }
     }
 
-    return parts.join('\n\n');
+    return { text: parts.join('\n\n'), sources };
   }
 }

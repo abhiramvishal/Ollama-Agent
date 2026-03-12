@@ -411,11 +411,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         processedText = await this._resolveMentionsInMessage(processedText);
 
         let fullMessage = processedText;
+        const contextTypes: string[] = [];
         if (this._contextRegistry) {
             try {
                 const ctx = await this._contextRegistry.assemble(processedText, 8000);
-                if (ctx && ctx.trim()) {
-                    fullMessage = ctx + '\n\n' + fullMessage;
+                if (ctx.text && ctx.text.trim()) {
+                    fullMessage = ctx.text + '\n\n' + fullMessage;
+                    contextTypes.push(...ctx.sources);
                 }
             } catch {
                 // Non-blocking
@@ -424,6 +426,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         if (codeContext && !fullMessage.includes(codeContext)) {
             fullMessage = fullMessage + '\n\n**Selected code:**\n\`\`\`' + this._getEditorLang() + '\n' + codeContext + '\n\`\`\`';
+            if (!contextTypes.includes('selection')) contextTypes.push('selection');
         }
 
         // Attach @-mentioned files
@@ -439,6 +442,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     } catch { /* skip unreadable */ }
                 }
             }
+            if (!contextTypes.includes('files')) contextTypes.push('files');
         }
 
         // Build messages array
@@ -457,6 +461,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 role: 'user', content: text, timestamp: Date.now()
             });
         }
+
+        this._view?.webview.postMessage({ type: 'userMessage', text, contextTypes });
 
         if (isAgentTask) {
             await this._runAgent(messages, model, text, processedText);
@@ -879,6 +885,10 @@ body {
 .message { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
 .message.user { align-items: flex-end; }
 .message.assistant { align-items: flex-start; }
+.context-symbols {
+  font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
+}
+.context-symbols span { opacity: 0.85; }
 .bubble {
   padding: 8px 12px; border-radius: 12px; max-width: 94%; word-break: break-word; line-height: 1.5; font-size: 13px;
 }
@@ -1218,10 +1228,17 @@ function hideEmpty(){emptyState.style.display='none';if(emptyStateNoSetup) empty
 function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-function addUser(text){
+var CONTEXT_SYMBOLS = { selection:'\u2702', activeFile:'\uD83D\uDCC4', workspaceRag:'\uD83D\uDD0D', gitDiff:'\u2393', diagnostics:'\u26A0', memory:'\uD83E\uDDE0', skills:'\u26A1', files:'\uD83D\uDCC1' };
+function addUser(text, contextTypes){
   hideEmpty();
   const d=document.createElement('div'); d.className='message user';
   d.innerHTML='<div class="bubble">'+esc(text)+'</div>';
+  if(contextTypes&&contextTypes.length){
+    const sym=document.createElement('div'); sym.className='context-symbols';
+    sym.title='Context: '+contextTypes.join(', ');
+    sym.innerHTML=contextTypes.map(t=>'<span title="'+esc(t)+'">'+(CONTEXT_SYMBOLS[t]||'')+' '+esc(t)+'</span>').join('');
+    d.appendChild(sym);
+  }
   msgs.appendChild(d); scrollBot();
 }
 
@@ -1330,7 +1347,7 @@ function showPlan(html){
 window.addEventListener('message',e=>{
   const m=e.data;
   switch(m.type){
-    case 'userMessage': addUser(m.text); startAssistant(); setRunning(true); break;
+    case 'userMessage': addUser(m.text, m.contextTypes); startAssistant(); setRunning(true); break;
     case 'startAssistantMessage': startAssistant(); setRunning(true); break;
     case 'streamChunk': streamChunk(m.chunk); break;
     case 'finalizeAssistantMessage': finalize(m.html); agentEnd(); break;
