@@ -3,7 +3,7 @@
   "publisher": "clawpilot",
   "displayName": "ClawPilot",
   "description": "Local AI coding assistant powered by Ollama — chat, inline completions, code actions, git tools, and more.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "assets/icon.png",
   "license": "MIT",
   "homepage": "https://github.com/abhiramvishal/Ollama-Agent",
