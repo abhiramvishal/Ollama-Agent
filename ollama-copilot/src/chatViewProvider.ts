@@ -75,6 +75,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }, 300);
     }
 
+    public async sendQuickAction(prompt: string): Promise<void> {
+        await vscode.commands.executeCommand('ollamaCopilot.openChat');
+        await new Promise<void>(resolve => setTimeout(resolve, 150));
+        this._view?.webview.postMessage({ type: 'injectPrompt', text: prompt });
+        this._view?.webview.postMessage({ type: 'submitPrompt' });
+    }
+
     private async _handleMessage(msg: any) {
         switch (msg.type) {
             case 'sendMessage':
@@ -1059,6 +1066,8 @@ window.addEventListener('message',e=>{
       break;
     case 'workspaceFiles': renderFile(m.files); break;
     case 'injectMessage': input.value=m.text; if(m.codeContext)selText=m.codeContext; autoSz(); input.focus(); break;
+    case 'injectPrompt': input.value=m.text||''; autoSz(); break;
+    case 'submitPrompt': if(input.value.trim())send(); break;
     case 'error':
       if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
       setRunning(false); break;

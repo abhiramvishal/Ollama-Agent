@@ -5,6 +5,9 @@ import { ChatViewProvider } from './chatViewProvider';
 import { WorkspaceIndex } from './rag/workspaceIndex';
 import { MemoryStore } from './memory/memoryStore';
 import { SkillStore } from './memory/skillStore';
+import { buildActionPrompt, getSelectionContext } from './actions/selectionActions';
+import type { ActionKind } from './actions/selectionActions';
+import { OllamaCodeLensProvider } from './actions/codeLensProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -55,6 +58,122 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.commands.registerCommand('ollamaCopilot.openChat', () => {
             vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider('*', new OllamaCodeLensProvider())
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.explain', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) {
+                vscode.window.showInformationMessage('Select some code first.');
+                return;
+            }
+            const prompt = buildActionPrompt('explain', ctx);
+            await chatProvider.sendQuickAction(prompt);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.refactor', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) {
+                vscode.window.showInformationMessage('Select some code first.');
+                return;
+            }
+            const prompt = buildActionPrompt('refactor', ctx);
+            await chatProvider.sendQuickAction(prompt);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.fix', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) {
+                vscode.window.showInformationMessage('Select some code first.');
+                return;
+            }
+            const prompt = buildActionPrompt('fix', ctx);
+            await chatProvider.sendQuickAction(prompt);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.add_tests', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) {
+                vscode.window.showInformationMessage('Select some code first.');
+                return;
+            }
+            const prompt = buildActionPrompt('add_tests', ctx);
+            await chatProvider.sendQuickAction(prompt);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.add_docs', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) {
+                vscode.window.showInformationMessage('Select some code first.');
+                return;
+            }
+            const prompt = buildActionPrompt('add_docs', ctx);
+            await chatProvider.sendQuickAction(prompt);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.codeLensAction', async (uri: vscode.Uri, lineIndex: number) => {
+            const doc = await vscode.workspace.openTextDocument(uri);
+            const lines = doc.getText().split(/\r?\n/);
+            const startIndent = (lines[lineIndex] ?? '').match(/^(\s*)/)?.[1]?.length ?? 0;
+            let blockEnd = lineIndex;
+            const maxLook = Math.min(lineIndex + 80, lines.length);
+            for (let i = lineIndex + 1; i < maxLook; i++) {
+                const line = lines[i] ?? '';
+                const trimmed = line.trim();
+                if (trimmed.length > 0) {
+                    const indent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+                    if (indent <= startIndent) {
+                        blockEnd = i - 1;
+                        break;
+                    }
+                }
+                blockEnd = i;
+            }
+            const endLine = Math.min(blockEnd, lines.length - 1);
+            const endCol = (lines[endLine] ?? '').length;
+            const range = new vscode.Range(lineIndex, 0, endLine, endCol);
+            const editor = await vscode.window.showTextDocument(doc, { selection: range, preserveFocus: false });
+            editor.revealRange(range);
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const ctx = getSelectionContext(editor, root);
+            if (!ctx) { return; }
+            const items: vscode.QuickPickItem[] = [
+                { label: '$(symbol-misc) Explain', detail: 'explain' },
+                { label: '$(tools) Refactor', detail: 'refactor' },
+                { label: '$(bug) Fix Bug', detail: 'fix' },
+                { label: '$(beaker) Add Tests', detail: 'add_tests' },
+                { label: '$(book) Add Docs', detail: 'add_docs' },
+            ];
+            const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Ollama: Choose action' });
+            if (picked?.detail) {
+                const prompt = buildActionPrompt(picked.detail as ActionKind, ctx);
+                await chatProvider.sendQuickAction(prompt);
+            }
         })
     );
 

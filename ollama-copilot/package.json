@@ -78,6 +78,30 @@
       {
         "command": "ollamaCopilot.viewMemory",
         "title": "Ollama: View / Edit Memory"
+      },
+      {
+        "command": "ollamaCopilot.explain",
+        "title": "Ollama: Explain Selection"
+      },
+      {
+        "command": "ollamaCopilot.refactor",
+        "title": "Ollama: Refactor Selection"
+      },
+      {
+        "command": "ollamaCopilot.fix",
+        "title": "Ollama: Fix Bugs in Selection"
+      },
+      {
+        "command": "ollamaCopilot.add_tests",
+        "title": "Ollama: Add Tests for Selection"
+      },
+      {
+        "command": "ollamaCopilot.add_docs",
+        "title": "Ollama: Add Docs to Selection"
+      },
+      {
+        "command": "ollamaCopilot.codeLensAction",
+        "title": "Ollama: Code Lens Action"
       }
     ],
     "viewsContainers": {
@@ -100,6 +124,31 @@
     },
     "menus": {
       "editor/context": [
+        {
+          "command": "ollamaCopilot.explain",
+          "when": "editorHasSelection",
+          "group": "ollama@1"
+        },
+        {
+          "command": "ollamaCopilot.refactor",
+          "when": "editorHasSelection",
+          "group": "ollama@2"
+        },
+        {
+          "command": "ollamaCopilot.fix",
+          "when": "editorHasSelection",
+          "group": "ollama@3"
+        },
+        {
+          "command": "ollamaCopilot.add_tests",
+          "when": "editorHasSelection",
+          "group": "ollama@4"
+        },
+        {
+          "command": "ollamaCopilot.add_docs",
+          "when": "editorHasSelection",
+          "group": "ollama@5"
+        },
         {
           "command": "ollamaCopilot.explainCode",
           "when": "editorHasSelection",
@@ -166,6 +215,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable Copilot-style inline code completions"
+        },
+        "ollamaCopilot.codeLensEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Ollama Code Lens above functions and classes."
         },
         "ollamaCopilot.completionDebounceMs": {
           "type": "number",
