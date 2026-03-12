@@ -52,12 +52,9 @@ To test the build without publishing, push to **main** or **master**, or go to *
 
 ## Builds not running?
 
-GitHub only runs workflows when `.github` is at your **repository root**.
+This repo has the extension in **ollama-copilot/** with the repo root one level up. Workflows live in **.github/** at the repo root (the parent of `ollama-copilot`) and use `working-directory: ollama-copilot`. Do not add a `.github` inside `ollama-copilot`—GitHub only runs workflows from the root.
 
-- **If your repo root is the extension folder** (you only have `package.json`, `src/`, etc. at root): the workflows in `ollama-copilot/.github/` are used. Push to **main** or **master**, or trigger **CI** manually.
-- **If your repo root is the parent** (e.g. repo `Ollama-Agent` and the extension lives in `ollama-copilot/`): GitHub ignores `ollama-copilot/.github/`. Use the workflows from the **parent** folder: copy the `.github` folder from the parent of `ollama-copilot` to your repo root (so the root has `.github/workflows/` and `ollama-copilot/`). Those workflows already set `working-directory: ollama-copilot`.
-
-Check your default branch name (Settings → General): CI triggers on **main** and **master**. If you use another branch, push to main/master or run the workflow manually.
+CI triggers on **main** and **master**. If your default branch is different, push to main/master or run **Actions → CI → Run workflow** manually.
 
 ## Manual publish (local)
 
@@ -67,14 +64,9 @@ npm run bundle:prod
 npx @vscode/vsce publish -p YOUR_PAT
 ```
 
-## Extension in a subfolder
+## Repo structure
 
-If your repo root is **not** the extension (e.g. repo `Ollama-Agent` with extension in `ollama-copilot/`):
-
-1. Move the `.github` folder to the **repo root**.
-2. In both workflow files, add `defaults.run.working-directory: ollama-copilot` under the `build` job (and use the same for `publish` if it runs any commands in that folder). Or run every step as `cd ollama-copilot && <command>`.
-
-GitHub only runs workflows from `.github` at the repository root.
+The repo root is the **parent** of `ollama-copilot` (e.g. `Ollama-Agent`). The root contains `.github/workflows/` and the `ollama-copilot/` folder. The workflows are already set up with `working-directory: ollama-copilot`.
 
 ## Links
 
