@@ -1,7 +1,4 @@
-# Build and publish ClawPilot to the VS Code Marketplace.
-# Trigger: push a version tag (e.g. v1.0.1), create a Release, or run manually.
-# Required: Add VSCE_PAT secret (Azure DevOps PAT with Marketplace publish scope).
-
+# Build and publish ClawPilot (runs from repo root when extension is in ollama-copilot/).
 name: Build and Publish Extension
 
 on:
@@ -15,6 +12,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ollama-copilot
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +23,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: ollama-copilot/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -39,12 +40,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clawpilot-vsix
-          path: '*.vsix'
+          path: ollama-copilot/*.vsix
 
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # Only publish on tag push or release; skip for manual workflow_dispatch
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     steps:
       - name: Download vsix

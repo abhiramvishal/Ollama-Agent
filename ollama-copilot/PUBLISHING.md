@@ -41,12 +41,23 @@ Alternatively, create a **GitHub Release** (tag + release notes). The workflow a
 
 ## Workflows
 
-| Workflow        | Trigger              | What it does                          |
-|----------------|----------------------|----------------------------------------|
-| **CI**         | Push/PR to main      | Build and package (no publish)         |
-| **Publish**    | Tag `v*` or Release  | Build, package, publish to Marketplace |
+| Workflow        | Trigger                    | What it does                          |
+|----------------|----------------------------|----------------------------------------|
+| **CI**         | Push/PR to main or master  | Build and package (no publish)         |
+| **CI**         | Manual: Actions → CI → Run workflow | Same (run anytime)            |
+| **Publish**    | Tag `v*` or Release        | Build, package, publish to Marketplace |
+| **Publish**    | Manual: Actions → Run workflow | Build + package only (no publish)  |
 
-To test the build without publishing, run the **CI** workflow (push to main) or run **Publish** via **Actions** → **Run workflow** (this only produces a `.vsix` artifact; the publish step runs only for tags/releases).
+To test the build without publishing, push to **main** or **master**, or go to **Actions** → **CI** (or **Build and Publish Extension**) → **Run workflow**.
+
+## Builds not running?
+
+GitHub only runs workflows when `.github` is at your **repository root**.
+
+- **If your repo root is the extension folder** (you only have `package.json`, `src/`, etc. at root): the workflows in `ollama-copilot/.github/` are used. Push to **main** or **master**, or trigger **CI** manually.
+- **If your repo root is the parent** (e.g. repo `Ollama-Agent` and the extension lives in `ollama-copilot/`): GitHub ignores `ollama-copilot/.github/`. Use the workflows from the **parent** folder: copy the `.github` folder from the parent of `ollama-copilot` to your repo root (so the root has `.github/workflows/` and `ollama-copilot/`). Those workflows already set `working-directory: ollama-copilot`.
+
+Check your default branch name (Settings → General): CI triggers on **main** and **master**. If you use another branch, push to main/master or run the workflow manually.
 
 ## Manual publish (local)
 
