@@ -102,6 +102,10 @@
       {
         "command": "ollamaCopilot.codeLensAction",
         "title": "Ollama: Code Lens Action"
+      },
+      {
+        "command": "ollamaCopilot.toggleCompletions",
+        "title": "Ollama: Toggle Inline Completions"
       }
     ],
     "viewsContainers": {
@@ -220,6 +224,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Ollama Code Lens above functions and classes."
+        },
+        "ollamaCopilot.inlineCompletionsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Ollama ghost-text inline completions as you type."
         },
         "ollamaCopilot.completionDebounceMs": {
           "type": "number",

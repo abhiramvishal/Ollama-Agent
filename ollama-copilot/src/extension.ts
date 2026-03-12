@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { OllamaClient, KNOWN_MODELS } from './ollamaClient';
-import { OllamaCompletionProvider } from './completionProvider';
+import { OllamaCompletionProvider } from './completion/completionProvider';
+import { CompletionStatusBar } from './completion/completionStatusBar';
 import { ChatViewProvider } from './chatViewProvider';
 import { WorkspaceIndex } from './rag/workspaceIndex';
 import { MemoryStore } from './memory/memoryStore';
@@ -44,13 +45,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         )
     );
 
-    // Inline completions
-    const completionProvider = new OllamaCompletionProvider(client, statusBarItem);
+    // Inline completions (ghost text)
+    const initialModel = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', 'llama3');
+    const completionProvider = new OllamaCompletionProvider(client, initialModel);
     context.subscriptions.push(
         vscode.languages.registerInlineCompletionItemProvider(
             { pattern: '**' },
             completionProvider
         )
+    );
+    new CompletionStatusBar(context);
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.toggleCompletions', async () => {
+            const cfg = vscode.workspace.getConfiguration('ollamaCopilot');
+            const current = cfg.get<boolean>('inlineCompletionsEnabled', true);
+            await cfg.update('inlineCompletionsEnabled', !current, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(
+                `Ollama inline completions ${!current ? 'enabled' : 'disabled'}.`
+            );
+        })
     );
 
     // ── Commands ──
@@ -386,6 +399,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (e.affectsConfiguration('ollamaCopilot.model')) {
                 const model = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', '');
                 updateStatusBar(client, model);
+                completionProvider.updateModel(model || 'llama3');
             }
         })
     );
