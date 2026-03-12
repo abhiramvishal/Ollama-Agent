@@ -14,12 +14,22 @@ import { DiagnosticStatusBar } from './diagnostics/diagnosticStatusBar';
 import { buildDiagnosticPrompt } from './diagnostics/diagnosticPromptBuilder';
 import { HistoryStore } from './history/historyStore';
 import { GitStatusBar } from './git/gitStatusBar';
+import { ContextRegistry } from './context/contextRegistry';
+import { createActiveFileProvider } from './context/providers/activeFileProvider';
+import { createSelectionProvider } from './context/providers/selectionProvider';
+import { createDiagnosticsProvider } from './context/providers/diagnosticsProvider';
+import { createGitDiffProvider } from './context/providers/gitDiffProvider';
+import { createWorkspaceRagProvider } from './context/providers/workspaceRagProvider';
+import { createMemoryProvider } from './context/providers/memoryProvider';
+import { createSkillProvider } from './context/providers/skillProvider';
+import { ClawProxy } from './proxy/clawProxy';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
 let workspaceIndex: WorkspaceIndex;
 let memoryStore: MemoryStore;
 let skillStore: SkillStore;
+let proxy: ClawProxy | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const client = new OllamaClient();
@@ -36,7 +46,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     updateStatusBar(client);
-    statusBarItem.command = 'ollamaCopilot.openChat';
+    statusBarItem.command = 'clawpilot.openChat';
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
@@ -52,8 +62,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const historyStore = new HistoryStore(context);
     chatProvider.setHistoryStore(historyStore);
 
+    // Local proxy (OpenAI-compatible) for external tools
+    const initialConfig = vscode.workspace.getConfiguration('clawpilot');
+    if (initialConfig.get<boolean>('proxyEnabled', false)) {
+        proxy = new ClawProxy(client);
+        try {
+            await proxy.start();
+            context.subscriptions.push({ dispose: () => proxy?.stop() });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `ClawPilot proxy failed to start: ${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
+    const contextRegistry = new ContextRegistry();
+    contextRegistry.register(createSelectionProvider());
+    contextRegistry.register(createActiveFileProvider());
+    contextRegistry.register(createDiagnosticsProvider());
+    contextRegistry.register(createSkillProvider(skillStore));
+    contextRegistry.register(createGitDiffProvider());
+    contextRegistry.register(createWorkspaceRagProvider(workspaceIndex));
+    contextRegistry.register(createMemoryProvider(memoryStore));
+    chatProvider.setContextRegistry(contextRegistry);
+
     // Inline completions (ghost text)
-    const initialModel = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', 'llama3');
+    const initialModel = vscode.workspace.getConfiguration('clawpilot').get<string>('model', 'llama3');
     const completionProvider = new OllamaCompletionProvider(client, initialModel);
     context.subscriptions.push(
         vscode.languages.registerInlineCompletionItemProvider(
@@ -63,12 +97,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
     new CompletionStatusBar(context);
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.toggleCompletions', async () => {
-            const cfg = vscode.workspace.getConfiguration('ollamaCopilot');
+        vscode.commands.registerCommand('clawpilot.toggleCompletions', async () => {
+            const cfg = vscode.workspace.getConfiguration('clawpilot');
             const current = cfg.get<boolean>('inlineCompletionsEnabled', true);
             await cfg.update('inlineCompletionsEnabled', !current, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(
-                `Ollama inline completions ${!current ? 'enabled' : 'disabled'}.`
+                `ClawPilot inline completions ${!current ? 'enabled' : 'disabled'}.`
             );
         })
     );
@@ -82,7 +116,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
     context.subscriptions.push(
         vscode.commands.registerCommand(
-            'ollamaCopilot.fixDiagnostic',
+            'clawpilot.fixDiagnostic',
             async (document: vscode.TextDocument, diag: vscode.Diagnostic) => {
                 const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
                 const prompt = buildDiagnosticPrompt(document, diag, root);
@@ -93,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     new DiagnosticStatusBar(context);
     new GitStatusBar(context);
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.askGitStatus', async () => {
+        vscode.commands.registerCommand('clawpilot.askGitStatus', async () => {
             await chatProvider.sendQuickAction(
                 'Run git_status and git_log to summarise the current state of the repo. ' +
                 'List modified files and the last 5 commits. Be concise.'
@@ -101,7 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.newSession', async () => {
+        vscode.commands.registerCommand('clawpilot.newSession', async () => {
             const name = await vscode.window.showInputBox({
                 prompt: 'Session name (leave blank for default)',
                 placeHolder: 'My debugging session'
@@ -112,7 +146,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.switchSession', async () => {
+        vscode.commands.registerCommand('clawpilot.switchSession', async () => {
             const index = historyStore.getIndex();
             if (!index.sessions.length) {
                 vscode.window.showInformationMessage('No saved sessions.');
@@ -133,7 +167,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.clearSession', async () => {
+        vscode.commands.registerCommand('clawpilot.clearSession', async () => {
             const id = historyStore.getActiveSessionId();
             if (!id) return;
             const confirm = await vscode.window.showWarningMessage(
@@ -145,7 +179,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.exportSession', async () => {
+        vscode.commands.registerCommand('clawpilot.exportSession', async () => {
             const id = historyStore.getActiveSessionId();
             if (!id) return;
             const md = historyStore.exportSession(id);
@@ -159,8 +193,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // ── Commands ──
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.openChat', () => {
-            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+        vscode.commands.registerCommand('clawpilot.openChat', () => {
+            vscode.commands.executeCommand('clawpilot.chatView.focus');
         })
     );
 
@@ -169,7 +203,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.explain', async () => {
+        vscode.commands.registerCommand('clawpilot.explain', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -183,7 +217,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.refactor', async () => {
+        vscode.commands.registerCommand('clawpilot.refactor', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -197,7 +231,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.fix', async () => {
+        vscode.commands.registerCommand('clawpilot.fix', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -211,7 +245,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.add_tests', async () => {
+        vscode.commands.registerCommand('clawpilot.add_tests', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -225,7 +259,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.add_docs', async () => {
+        vscode.commands.registerCommand('clawpilot.add_docs', async () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -239,7 +273,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.codeLensAction', async (uri: vscode.Uri, lineIndex: number) => {
+        vscode.commands.registerCommand('clawpilot.codeLensAction', async (uri: vscode.Uri, lineIndex: number) => {
             const doc = await vscode.workspace.openTextDocument(uri);
             const lines = doc.getText().split(/\r?\n/);
             const startIndent = (lines[lineIndex] ?? '').match(/^(\s*)/)?.[1]?.length ?? 0;
@@ -272,7 +306,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 { label: '$(beaker) Add Tests', detail: 'add_tests' },
                 { label: '$(book) Add Docs', detail: 'add_docs' },
             ];
-            const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Ollama: Choose action' });
+            const picked = await vscode.window.showQuickPick(items, { placeHolder: 'ClawPilot: Choose action' });
             if (picked?.detail) {
                 const prompt = buildActionPrompt(picked.detail as ActionKind, ctx);
                 await chatProvider.sendQuickAction(prompt);
@@ -282,14 +316,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Code action commands (context menu / keyboard shortcuts)
     const codeActions: Array<[string, string]> = [
-        ['ollamaCopilot.explainCode', '/explain'],
-        ['ollamaCopilot.refactorCode', '/refactor'],
-        ['ollamaCopilot.fixCode', '/fix'],
-        ['ollamaCopilot.generateDocs', '/docs'],
-        ['ollamaCopilot.reviewCode', '/review'],
-        ['ollamaCopilot.optimizeCode', '/optimize'],
-        ['ollamaCopilot.writeTests', '/test'],
-        ['ollamaCopilot.addTypes', '/types'],
+        ['clawpilot.explainCode', '/explain'],
+        ['clawpilot.refactorCode', '/refactor'],
+        ['clawpilot.fixCode', '/fix'],
+        ['clawpilot.generateDocs', '/docs'],
+        ['clawpilot.reviewCode', '/review'],
+        ['clawpilot.optimizeCode', '/optimize'],
+        ['clawpilot.writeTests', '/test'],
+        ['clawpilot.addTypes', '/types'],
     ];
 
     for (const [cmd, slash] of codeActions) {
@@ -300,7 +334,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Agent commands
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.editFile', async () => {
+        vscode.commands.registerCommand('clawpilot.editFile', async () => {
             const editor = vscode.window.activeTextEditor;
             const input = await vscode.window.showInputBox({
                 prompt: 'Describe the changes to make to this file',
@@ -309,37 +343,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (!input) { return; }
             const code = editor ? editor.document.getText() : '';
             chatProvider.sendToChat(`/edit ${input}`, code);
-            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+            vscode.commands.executeCommand('clawpilot.chatView.focus');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.planFeature', async () => {
+        vscode.commands.registerCommand('clawpilot.planFeature', async () => {
             const input = await vscode.window.showInputBox({
                 prompt: 'Describe the feature to plan',
                 placeHolder: 'e.g. Add user authentication with JWT'
             });
             if (!input) { return; }
             chatProvider.sendToChat(`/plan ${input}`);
-            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+            vscode.commands.executeCommand('clawpilot.chatView.focus');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.runCommand', async () => {
+        vscode.commands.registerCommand('clawpilot.runCommand', async () => {
             const input = await vscode.window.showInputBox({
                 prompt: 'Terminal command to run',
                 placeHolder: 'e.g. npm test'
             });
             if (!input) { return; }
             chatProvider.sendToChat(`/run ${input}`);
-            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+            vscode.commands.executeCommand('clawpilot.chatView.focus');
         })
     );
 
     // Model management
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.selectModel', async () => {
+        vscode.commands.registerCommand('clawpilot.selectModel', async () => {
             client.refreshConfig();
             let installed: { name: string }[] = [];
             try {
@@ -368,14 +402,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const picked = await vscode.window.showQuickPick(items, {
                 matchOnDescription: true,
                 matchOnDetail: true,
-                placeHolder: 'Select or pull an Ollama model'
+                placeHolder: 'Select or pull a model'
             });
             if (picked?.detail) {
                 const name = picked.detail;
                 if (!installedSet.has(name)) {
                     await pullModelWithProgress(client, name);
                 }
-                await vscode.workspace.getConfiguration('ollamaCopilot')
+                await vscode.workspace.getConfiguration('clawpilot')
                     .update('model', name, vscode.ConfigurationTarget.Global);
                 updateStatusBar(client, name);
             }
@@ -383,7 +417,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.clearMemory', async () => {
+        vscode.commands.registerCommand('clawpilot.clearMemory', async () => {
             const confirm = await vscode.window.showWarningMessage(
                 'Clear all agent memory (core, recall, archival)? This cannot be undone.',
                 'Clear',
@@ -391,24 +425,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             );
             if (confirm === 'Clear') {
                 await memoryStore.clearAll();
-                vscode.window.showInformationMessage('Ollama Copilot: Memory cleared.');
+                vscode.window.showInformationMessage('ClawPilot: Memory cleared.');
             }
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.viewMemory', () => {
-            vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+        vscode.commands.registerCommand('clawpilot.viewMemory', () => {
+            vscode.commands.executeCommand('clawpilot.chatView.focus');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.reindexWorkspace', async () => {
+        vscode.commands.registerCommand('clawpilot.reindexWorkspace', async () => {
             try {
                 await vscode.window.withProgress(
                     {
                         location: vscode.ProgressLocation.Notification,
-                        title: 'Ollama Copilot: Indexing workspace',
+                        title: 'ClawPilot: Indexing workspace',
                         cancellable: false,
                     },
                     async progress => {
@@ -418,7 +452,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     }
                 );
                 const st = workspaceIndex.status;
-                vscode.window.showInformationMessage(`Ollama Copilot: ${st.chunkCount} chunks indexed.`);
+                vscode.window.showInformationMessage(`ClawPilot: ${st.chunkCount} chunks indexed.`);
             } catch (err) {
                 vscode.window.showErrorMessage(`Re-index failed: ${err instanceof Error ? err.message : String(err)}`);
             }
@@ -426,7 +460,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('ollamaCopilot.pullModel', async () => {
+        vscode.commands.registerCommand('clawpilot.pullModel', async () => {
             const items = KNOWN_MODELS.map(m => ({
                 label: m.label,
                 description: m.category,
@@ -434,24 +468,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }));
             const picked = await vscode.window.showQuickPick(items, {
                 matchOnDescription: true,
-                placeHolder: 'Select model to pull from Ollama registry'
+                placeHolder: 'Select model to pull from registry'
             });
             if (!picked?.detail) { return; }
             const name = picked.detail;
             await pullModelWithProgress(client, name);
-            await vscode.workspace.getConfiguration('ollamaCopilot')
+            await vscode.workspace.getConfiguration('clawpilot')
                 .update('model', name, vscode.ConfigurationTarget.Global);
             updateStatusBar(client, name);
         })
     );
 
+    // Proxy toggle
+    context.subscriptions.push(
+        vscode.commands.registerCommand('clawpilot.toggleProxy', async () => {
+            const cfg = vscode.workspace.getConfiguration('clawpilot');
+            const enabled = cfg.get<boolean>('proxyEnabled', false);
+            if (enabled) {
+                await cfg.update('proxyEnabled', false, vscode.ConfigurationTarget.Global);
+                proxy?.stop();
+                proxy = undefined;
+                vscode.window.showInformationMessage('ClawPilot proxy disabled.');
+                return;
+            }
+            await cfg.update('proxyEnabled', true, vscode.ConfigurationTarget.Global);
+            proxy?.stop();
+            proxy = new ClawProxy(client);
+            try {
+                await proxy.start();
+                context.subscriptions.push({ dispose: () => proxy?.stop() });
+                vscode.window.showInformationMessage('ClawPilot proxy enabled.');
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    `Failed to start ClawPilot proxy: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        })
+    );
+
     // Initial workspace index (background, with progress notification)
-    const ragEnabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('ragEnabled', true);
+    const ragEnabled = vscode.workspace.getConfiguration('clawpilot').get<boolean>('ragEnabled', true);
     if (ragEnabled && vscode.workspace.workspaceFolders?.length) {
         void vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Window,
-                title: 'Ollama Copilot: Indexing workspace',
+                title: 'ClawPilot: Indexing workspace',
                 cancellable: false,
             },
             async progress => {
@@ -470,7 +531,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     client.isAvailable().then(available => {
         if (!available) {
             vscode.window.showWarningMessage(
-                'Ollama Copilot: Ollama server not found. Install Ollama and run `ollama serve`.',
+                'ClawPilot: Server not found. Install Ollama and run `ollama serve`.',
                 'Get Ollama'
             ).then(choice => {
                 if (choice === 'Get Ollama') {
@@ -478,7 +539,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 }
             });
         } else {
-            const model = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', '');
+            const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
             updateStatusBar(client, model);
         }
     });
@@ -486,8 +547,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Update status bar on config change
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('ollamaCopilot.model')) {
-                const model = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', '');
+            if (e.affectsConfiguration('clawpilot.model')) {
+                const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
                 updateStatusBar(client, model);
                 completionProvider.updateModel(model || 'llama3');
             }
@@ -503,7 +564,7 @@ function runSlashOnSelection(slash: string): void {
     }
     const code = editor.document.getText(editor.selection);
     chatProvider.sendToChat(slash, code);
-    vscode.commands.executeCommand('ollamaCopilot.chatView.focus');
+    vscode.commands.executeCommand('clawpilot.chatView.focus');
 }
 
 async function pullModelWithProgress(client: OllamaClient, name: string): Promise<void> {
@@ -518,16 +579,16 @@ async function pullModelWithProgress(client: OllamaClient, name: string): Promis
                 await client.pullModel(name, status => progress.report({ message: status }));
             }
         );
-        vscode.window.showInformationMessage(`Ollama: ${name} ready!`);
+        vscode.window.showInformationMessage(`ClawPilot: ${name} ready!`);
     } catch (err) {
         vscode.window.showErrorMessage(`Pull failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 
 function updateStatusBar(client: OllamaClient, model?: string): void {
-    const m = model || vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', '');
-    statusBarItem.text = m ? `$(sparkle) Ollama: ${m}` : '$(sparkle) Ollama';
-    statusBarItem.tooltip = 'Ollama Copilot — click to open chat';
+    const m = model || vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
+    statusBarItem.text = m ? `$(claw) ClawPilot: ${m}` : '$(claw) ClawPilot';
+    statusBarItem.tooltip = 'ClawPilot — click to open chat';
 }
 
 export function deactivate(): void {}

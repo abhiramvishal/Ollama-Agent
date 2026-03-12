@@ -64,7 +64,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
   constructor(client: OllamaClient, statusBarItem: vscode.StatusBarItem) {
     this.client = client;
     this.statusBarItem = statusBarItem;
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
+    const config = vscode.workspace.getConfiguration('clawpilot');
     this.debounceMs = config.get<number>('completionDebounceMs', 600);
   }
 
@@ -74,7 +74,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
     context: vscode.InlineCompletionContext,
     token: vscode.CancellationToken
   ): Promise<vscode.InlineCompletionItem[] | null> {
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
+    const config = vscode.workspace.getConfiguration('clawpilot');
     if (!config.get<boolean>('enableInlineCompletion', true)) {
       return null;
     }
@@ -100,8 +100,8 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
 
     const prompt = getFimPrompt(model, prefix, suffix, languageId);
 
-    this.statusBarItem.text = '$(loading~spin) Ollama';
-    this.statusBarItem.tooltip = 'Ollama is generating completion...';
+    this.statusBarItem.text = '$(claw) ClawPilot';
+    this.statusBarItem.tooltip = 'ClawPilot is generating completion...';
     this.lastRequestAbort = new AbortController();
 
     try {
@@ -113,7 +113,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
         ['\n\n', '```']
       )) {
         if (token.isCancellationRequested) {
-          this.statusBarItem.text = '$(sparkle) Ollama';
+          this.statusBarItem.text = '$(claw) ClawPilot';
           this.statusBarItem.tooltip = undefined;
           return null;
         }
@@ -122,13 +122,13 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
 
       let raw = chunks.join('');
       const cleaned = cleanCompletionText(raw, prefix);
-      this.statusBarItem.text = '$(sparkle) Ollama';
+      this.statusBarItem.text = '$(claw) ClawPilot';
       this.statusBarItem.tooltip = undefined;
 
       if (!cleaned) return null;
       return [new vscode.InlineCompletionItem(cleaned)];
     } catch (err) {
-      this.statusBarItem.text = '$(sparkle) Ollama';
+      this.statusBarItem.text = '$(claw) ClawPilot';
       this.statusBarItem.tooltip = undefined;
       return null;
     }

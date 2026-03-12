@@ -165,7 +165,7 @@ export class HistoryStore {
     const lines: string[] = [`# ${session.name}\n`];
     for (const msg of session.messages) {
       const ts = new Date(msg.timestamp).toLocaleTimeString();
-      lines.push(`**${msg.role === 'user' ? 'You' : 'Ollama'}** (${ts}):\n\n${msg.content}\n`);
+      lines.push(`**${msg.role === 'user' ? 'You' : 'ClawPilot'}** (${ts}):\n\n${msg.content}\n`);
     }
     return lines.join('\n---\n\n');
   }

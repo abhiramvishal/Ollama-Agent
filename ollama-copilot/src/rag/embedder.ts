@@ -18,7 +18,7 @@ export class Embedder {
   private _available: boolean | null = null;
 
   constructor() {
-    this._config = vscode.workspace.getConfiguration('ollamaCopilot');
+    this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
   private get endpoint(): string {
@@ -31,7 +31,7 @@ export class Embedder {
   }
 
   refreshConfig(): void {
-    this._config = vscode.workspace.getConfiguration('ollamaCopilot');
+    this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
   /** Check if embedding model is available (one-time probe, then cached). */

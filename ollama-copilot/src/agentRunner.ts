@@ -113,6 +113,8 @@ export class AgentRunner {
         const { messages, model, onStep, maxIterations = 15 } = options;
         const maxReflections = options.maxReflections ?? this._maxReflections;
         const diffPreviewEnabled = options.diffPreviewEnabled !== false;
+    const config = vscode.workspace.getConfiguration('clawpilot');
+    const fallbackModels = config.get<string[]>('fallbackModels', []);
 
         const history: ChatMessage[] = [...messages];
         const reflectionEngine = new ReflectionEngine(maxReflections);
@@ -130,7 +132,11 @@ export class AgentRunner {
             onStep({ type: 'thinking', content: '' });
 
             try {
-                for await (const chunk of this.client.streamChat(history, model)) {
+                for await (const chunk of this.client.streamChatWithFallback(history, model, fallbackModels)) {
+                    if (chunk.startsWith('[ClawPilot: switching to fallback model:')) {
+                        onStep({ type: 'thinking', content: '[Switching to fallback model...]' });
+                        continue;
+                    }
                     fullResponse += chunk;
                     onStep({ type: 'response', content: chunk });
                 }

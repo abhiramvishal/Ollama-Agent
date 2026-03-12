@@ -34,6 +34,7 @@ const MAX_KEY_FACT_LEN = 100;
 const SAVE_DEBOUNCE_MS = 2000;
 const RECALL_DAYS_CONSOLIDATE = 7;
 const RECALL_AFTER_CONSOLIDATE = 100;
+const DECAY_LAMBDA = 0.05;  // decay rate per day
 
 const STOPWORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
@@ -165,17 +166,22 @@ export class MemoryStore {
 
   searchRecall(query: string, topK: number = 5): MemoryEntry[] {
     const tokens = tokenize(query);
+    const now = Date.now();
     if (tokens.length === 0) {
       return this._data.recall.slice(0, topK);
     }
-    const now = Date.now();
     const scored = this._data.recall.map(entry => {
       const entryTokens = new Set(tokenize(entry.content));
-      let score = 0;
+      let bm25Score = 0;
       for (const t of tokens) {
-        if (entryTokens.has(t)) score++;
+        if (entryTokens.has(t)) bm25Score++;
       }
-      return { entry, score };
+      const lastAccess = entry.lastAccessedAt ?? entry.createdAt ?? now;
+      const daysSinceAccess = (now - lastAccess) / (1000 * 60 * 60 * 24);
+      const decayFactor = Math.exp(-DECAY_LAMBDA * daysSinceAccess);
+      const accessBoost = (entry.accessCount ?? 0) * 0.1;
+      const finalScore = bm25Score * decayFactor + accessBoost;
+      return { entry, score: finalScore };
     });
     scored.sort((a, b) => b.score - a.score);
     const result = scored.slice(0, topK).filter(x => x.score > 0).map(x => x.entry);
@@ -209,23 +215,28 @@ export class MemoryStore {
 
   searchArchival(query: string, topK: number = 5): MemoryEntry[] {
     const tokens = tokenize(query);
+    const now = Date.now();
     if (tokens.length === 0) {
       return this._data.archival.slice(-topK).reverse();
     }
     const scored = this._data.archival.map(entry => {
       const entryTokens = new Set(tokenize(entry.content));
-      let score = 0;
+      let bm25Score = 0;
       for (const t of tokens) {
-        if (entryTokens.has(t)) score++;
+        if (entryTokens.has(t)) bm25Score++;
       }
-      return { entry, score };
+      const lastAccess = entry.lastAccessedAt ?? entry.createdAt ?? now;
+      const daysSinceAccess = (now - lastAccess) / (1000 * 60 * 60 * 24);
+      const decayFactor = Math.exp(-DECAY_LAMBDA * daysSinceAccess);
+      const accessBoost = (entry.accessCount ?? 0) * 0.1;
+      const finalScore = bm25Score * decayFactor + accessBoost;
+      return { entry, score: finalScore };
     });
     scored.sort((a, b) => b.score - a.score);
     const result = scored.slice(0, topK).filter(x => x.score > 0).map(x => x.entry);
     if (result.length === 0) {
       result.push(...this._data.archival.slice(-topK).reverse());
     }
-    const now = Date.now();
     for (const e of result) {
       e.lastAccessedAt = now;
       e.accessCount = (e.accessCount || 0) + 1;

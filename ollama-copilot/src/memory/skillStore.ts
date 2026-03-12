@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { BUILTIN_SKILLS } from '../skills/builtinSkills';
 
 export interface Skill {
   id: string;
@@ -10,6 +11,7 @@ export interface Skill {
   tags: string[];
   createdAt: number;
   useCount: number;
+  isBuiltin?: boolean;
 }
 
 const MAX_CONTENT = 2000;
@@ -111,23 +113,34 @@ export class SkillStore {
   }
 
   listSkills(): Skill[] {
-    return this._skills.map(s => ({ ...s }));
+    const builtin = BUILTIN_SKILLS.map(s => ({ ...s, isBuiltin: true as boolean }));
+    return [...builtin, ...this._skills.map(s => ({ ...s }))];
+  }
+
+  listBuiltinSkills(): Skill[] {
+    return BUILTIN_SKILLS.map(s => ({ ...s, isBuiltin: true as boolean }));
   }
 
   getSkill(id: string): Skill | undefined {
+    const builtin = BUILTIN_SKILLS.find(s => s.id === id);
+    if (builtin) return { ...builtin, isBuiltin: true };
     const s = this._skills.find(s => s.id === id);
     return s ? { ...s } : undefined;
   }
 
   findRelevant(query: string, topK: number = 2): Skill[] {
     const tokens = new Set(tokenize(query));
+    const builtinWithFlag = BUILTIN_SKILLS.map(s => ({ ...s, isBuiltin: true as boolean }));
+    const combined = [...builtinWithFlag, ...this._skills];
     if (tokens.size === 0) {
-      return this._skills.slice(0, topK).map(s => {
-        s.useCount = (s.useCount || 0) + 1;
-        return { ...s };
-      });
+      const fallback = combined.slice(0, topK);
+      for (const s of fallback) {
+        if (!s.isBuiltin) (s as { useCount: number }).useCount = ((s as { useCount: number }).useCount || 0) + 1;
+      }
+      if (fallback.some(s => !s.isBuiltin)) this._scheduleSave();
+      return fallback.map(s => ({ ...s }));
     }
-    const scored = this._skills.map(skill => {
+    const scored = combined.map(skill => {
       const text = `${skill.description} ${skill.tags.join(' ')}`;
       const skillTokens = new Set(tokenize(text));
       let score = 0;
@@ -138,10 +151,9 @@ export class SkillStore {
     });
     scored.sort((a, b) => b.score - a.score);
     const result = scored.slice(0, topK).filter(x => x.score > 0).map(x => x.skill);
-    // Only increment useCount on genuine matches (not fallback), so the metric stays meaningful
     if (result.length > 0) {
       for (const s of result) {
-        s.useCount = (s.useCount || 0) + 1;
+        if (!s.isBuiltin) (s as { useCount: number }).useCount = ((s as { useCount: number }).useCount || 0) + 1;
       }
       this._scheduleSave();
     }

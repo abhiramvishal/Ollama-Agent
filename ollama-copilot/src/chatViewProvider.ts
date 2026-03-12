@@ -11,9 +11,11 @@ import { formatDiffHtml } from './diff/diffEngine';
 import type { HistoryStore } from './history/historyStore';
 import type { ChatSession } from './history/historyStore';
 import { matchSlashCommand, SLASH_COMMANDS } from './slash/slashCommands';
+import type { ContextRegistry } from './context/contextRegistry';
+import { resolveMention } from './mentions/mentionResolver';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'ollamaCopilot.chatView';
+    public static readonly viewType = 'clawpilot.chatView';
     private _view?: vscode.WebviewView;
     private _client: OllamaClient;
     private _workspaceIndex: WorkspaceIndex;
@@ -25,6 +27,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _pendingPlanMessages: ChatMessage[] | null = null;
     private _historyStore: HistoryStore | undefined;
     private _activeSessionId: string | null = null;
+    private _contextRegistry: ContextRegistry | undefined;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -37,7 +40,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = workspaceIndex;
         this._memoryStore = memoryStore;
         this._skillStore = skillStore;
-        const maxRetries = vscode.workspace.getConfiguration('ollamaCopilot').get<number>('reflexionMaxRetries', 3);
+        const maxRetries = vscode.workspace.getConfiguration('clawpilot').get<number>('reflexionMaxRetries', 3);
         this._agentRunner = new AgentRunner(client, new AgentTools(workspaceIndex, memoryStore, skillStore), maxRetries);
     }
 
@@ -90,7 +93,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     public async sendQuickAction(prompt: string): Promise<void> {
-        await vscode.commands.executeCommand('ollamaCopilot.openChat');
+        await vscode.commands.executeCommand('clawpilot.openChat');
         await new Promise<void>(resolve => setTimeout(resolve, 150));
         this._view?.webview.postMessage({ type: 'injectPrompt', text: prompt });
         this._view?.webview.postMessage({ type: 'submitPrompt' });
@@ -109,6 +112,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._activeSessionId = session.id;
         this._historyStore?.setActiveSession(session.id);
         this._sendHistoryToWebview(session);
+    }
+
+    public setContextRegistry(registry: ContextRegistry): void {
+        this._contextRegistry = registry;
     }
 
     public clearWebviewMessages(): void {
@@ -136,7 +143,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
                 break;
             case 'changeModel':
-                vscode.workspace.getConfiguration('ollamaCopilot').update('model', msg.model, true);
+                vscode.workspace.getConfiguration('clawpilot').update('model', msg.model, true);
                 break;
             case 'clearChat':
                 this._chatHistory = [];
@@ -315,13 +322,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 case 'explain':
-                    await vscode.commands.executeCommand('ollamaCopilot.explain');
+                    await vscode.commands.executeCommand('clawpilot.explain');
                     return;
                 case 'fix':
-                    await vscode.commands.executeCommand('ollamaCopilot.fix');
+                    await vscode.commands.executeCommand('clawpilot.fix');
                     return;
                 case 'tests':
-                    await vscode.commands.executeCommand('ollamaCopilot.add_tests');
+                    await vscode.commands.executeCommand('clawpilot.add_tests');
                     return;
                 case 'status':
                     processedText = command.expandTo!;
@@ -334,11 +341,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         });
                         return;
                     }
-                    await vscode.workspace.getConfiguration('ollamaCopilot').update('model', arg.trim(), vscode.ConfigurationTarget.Global);
+                    await vscode.workspace.getConfiguration('clawpilot').update('model', arg.trim(), vscode.ConfigurationTarget.Global);
                     this._view?.webview.postMessage({ type: 'setModel', model: arg.trim() });
                     this._view?.webview.postMessage({
                         type: 'assistantMessage',
                         html: renderMarkdownToHtml(`Switched model to \`${arg.trim()}\`.`)
+                    });
+                    return;
+                }
+                case 'skills': {
+                    const skills = this._skillStore.listSkills();
+                    const builtin = skills.filter(s => s.isBuiltin);
+                    const user = skills.filter(s => !s.isBuiltin);
+                    let body = '**Built-in skills**\n\n';
+                    body += builtin.map(s => `- **${s.name}** — ${s.description}`).join('\n');
+                    body += '\n\n**Your saved skills**\n\n';
+                    body += user.length > 0 ? user.map(s => `- **${s.name}** — ${s.description}`).join('\n') : '_None yet. Save skills from the chat to reuse them._';
+                    this._view?.webview.postMessage({
+                        type: 'assistantMessage',
+                        html: renderMarkdownToHtml(body)
                     });
                     return;
                 }
@@ -347,7 +368,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const config = vscode.workspace.getConfiguration('clawpilot');
         const model = config.get<string>('model', 'llama3');
         const systemPrompt = config.get<string>('systemPrompt', '');
 
@@ -363,34 +384,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // Memory + skills (before RAG): core, recall, skills when enabled
+        processedText = await this._resolveMentionsInMessage(processedText);
+
         let fullMessage = processedText;
-        const memoryEnabled = config.get<boolean>('memoryEnabled', true);
-        if (memoryEnabled) {
+        if (this._contextRegistry) {
             try {
-                const coreBlock = this._memoryStore.getCoreContextBlock();
-                const recallTopK = config.get<number>('recallTopK', 3);
-                const recallBlock = this._memoryStore.getRecallContextBlock(processedText, recallTopK);
-                const skillBlock = this._skillStore.getSkillContextBlock(processedText);
-                const parts: string[] = [];
-                if (coreBlock) parts.push(coreBlock);
-                if (recallBlock) parts.push(recallBlock);
-                if (skillBlock) parts.push(skillBlock);
-                if (parts.length > 0) {
-                    fullMessage = parts.join('\n\n') + '\n\n' + fullMessage;
+                const ctx = await this._contextRegistry.assemble(processedText, 8000);
+                if (ctx && ctx.trim()) {
+                    fullMessage = ctx + '\n\n' + fullMessage;
                 }
             } catch {
                 // Non-blocking
             }
-        }
-        // RAG: inject workspace context before user message (when enabled)
-        try {
-            const ragContext = await this._workspaceIndex.getContext(processedText);
-            if (ragContext) {
-                fullMessage = ragContext + '\n\n' + fullMessage;
-            }
-        } catch {
-            // Non-blocking; continue without RAG context
         }
 
         if (codeContext && !fullMessage.includes(codeContext)) {
@@ -539,7 +544,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         };
 
         try {
-            const diffPreviewEnabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('diffPreviewEnabled', true);
+            const diffPreviewEnabled = vscode.workspace.getConfiguration('clawpilot').get<boolean>('diffPreviewEnabled', true);
             await this._agentRunner.run({ messages, model, onStep, diffPreviewEnabled });
             this._pushHistory(userMsg, fullTextResponse);
             if (this._historyStore && this._activeSessionId) {
@@ -556,7 +561,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async _autoSaveRecall(userMsg: string, fullResponse: string, model: string) {
-        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const config = vscode.workspace.getConfiguration('clawpilot');
         if (!config.get<boolean>('autoSaveMemory', true)) return;
         try {
             const content = `User asked: ${userMsg.slice(0, 200)} | Response summary: ${fullResponse.slice(0, 300)}`;
@@ -570,7 +575,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     private async _executePlan() {
         if (!this._pendingPlanMessages) { return; }
-        const config = vscode.workspace.getConfiguration('ollamaCopilot');
+        const config = vscode.workspace.getConfiguration('clawpilot');
         const model = config.get<string>('model', 'llama3');
         const messages = this._pendingPlanMessages;
         this._pendingPlanMessages = null;
@@ -589,6 +594,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (this._chatHistory.length > 40) {
             this._chatHistory = this._chatHistory.slice(-40);
         }
+    }
+
+    private static readonly MENTION_PATTERN = /@(\w+)(?::([^\s]*))?/g;
+
+    private async _resolveMentionsInMessage(text: string): Promise<string> {
+        const matches = [...text.matchAll(ChatViewProvider.MENTION_PATTERN)];
+        if (matches.length === 0) return text;
+        const replacements: { index: number; length: number; content: string }[] = [];
+        for (const m of matches) {
+            const full = m[0];
+            const resolved = await resolveMention(full, this._workspaceIndex, this._memoryStore);
+            replacements.push({
+                index: m.index!,
+                length: full.length,
+                content: resolved ? resolved.content : `[mention not found: ${full}]`,
+            });
+        }
+        replacements.sort((a, b) => b.index - a.index);
+        let result = text;
+        for (const r of replacements) {
+            result = result.slice(0, r.index) + r.content + result.slice(r.index + r.length);
+        }
+        return result;
     }
 
     private _expandSlashCommand(cmd: string, rest: string, codeContext?: string): string {
@@ -613,7 +641,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _refreshModels() {
         try {
             const models = await this._client.listModels();
-            const config = vscode.workspace.getConfiguration('ollamaCopilot');
+            const config = vscode.workspace.getConfiguration('clawpilot');
             const current = config.get<string>('model', 'llama3');
             this._view?.webview.postMessage({ type: 'models', models, current });
         } catch {
@@ -672,7 +700,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ollama Copilot</title>
+<title>ClawPilot</title>
 <style nonce="${nonce}">
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -835,6 +863,9 @@ textarea { flex: 1; background: none; border: none; outline: none; resize: none;
 .slash-item:hover, .slash-item.sel, .file-item:hover, .file-item.sel { background: var(--vscode-list-hoverBackground); }
 .slash-cmd { font-weight: 700; color: #a78bfa; font-size: 13px; min-width: 80px; }
 .slash-desc { color: var(--vscode-descriptionForeground); font-size: 11px; }
+.mention-menu { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; align-items: center; }
+.mention-pill { padding: 4px 10px; border-radius: 14px; font-size: 12px; cursor: pointer; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border: 1px solid var(--vscode-panel-border); }
+.mention-pill:hover { background: var(--vscode-list-hoverBackground); }
 .hint { font-size: 10px; color: var(--vscode-descriptionForeground); padding: 0 10px 4px; }
 p { margin: 4px 0; } h1,h2,h3 { margin: 8px 0 4px; } ul,ol { padding-left: 18px; } li { margin: 2px 0; }
 code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
@@ -844,7 +875,7 @@ strong { font-weight: 700; } em { font-style: italic; }
 <body>
 <div class="header">
   <div class="status-dot" id="statusDot"></div>
-  <span class="header-title">Ollama Copilot</span>
+  <span class="header-title">ClawPilot</span>
   <button class="btn-icon" id="clearBtn" title="New chat">🗑</button>
   <button class="btn-icon" id="refreshBtn" title="Refresh">↻</button>
 </div>
@@ -877,7 +908,7 @@ strong { font-weight: 700; } em { font-style: italic; }
 <div class="messages" id="messages">
   <div class="empty-state" id="emptyState">
     <div class="empty-icon">🤖</div>
-    <div class="empty-title">Ollama Copilot</div>
+    <div class="empty-title">ClawPilot</div>
     <div class="empty-sub">Local AI · No cloud · No API keys<br>Type <strong>/</strong> for commands, <strong>@</strong> to attach files</div>
     <div class="quick-actions">
       <button class="quick-btn" data-cmd="/explain">Explain</button>
@@ -896,6 +927,7 @@ strong { font-weight: 700; } em { font-style: italic; }
 <div class="hint">/ commands · @ attach files · Enter to send · Shift+Enter newline</div>
 <div class="input-area" style="position:relative">
   <div id="slash-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;z-index:100;max-height:220px;overflow-y:auto;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
+  <div id="mention-menu" class="mention-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;z-index:100;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
   <div class="input-row">
     <textarea id="input" placeholder="Ask anything... or type / for commands" rows="1"></textarea>
     <button id="stopBtn" title="Stop" style="display:none;background:#f87171;color:#000;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;flex-shrink:0;">&#9632; Stop</button>
@@ -929,7 +961,8 @@ const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('sto
 const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
 const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
 const emptyState=$('emptyState'), sessionNameEl=$('session-name');
-const charCounter=$('char-counter'), slashMenu=$('slash-menu');
+const charCounter=$('char-counter'), slashMenu=$('slash-menu'), mentionMenu=$('mention-menu');
+const MENTION_TYPES = [{ type:'file', label:'file' }, { type:'git', label:'git' }, { type:'symbol', label:'symbol' }, { type:'memory', label:'memory' }, { type:'workspace', label:'workspace' }];
 let allCommands = [];
 
 vscode.postMessage({type:'getConnectionStatus'});
@@ -984,11 +1017,35 @@ input.addEventListener('input',()=>{
   const sm=v.match(/^\\/(\\w*)$/);
   if(sm&&!allCommands.length){ const p=sm[1].toLowerCase(); const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p)); if(f.length){renderSlash(f);return;} }
   hideSlash();
-  const am=v.slice(0,c).match(/@([^\\s]*)$/);
-  if(am){ vscode.postMessage({type:'getWorkspaceFiles',query:am[1]}); return; }
+  const am=v.slice(0,c).match(/@(\\w*)$/);
+  if(am){
+    const segment=v.slice(0,c).slice(v.slice(0,c).lastIndexOf('@'));
+    if(segment.indexOf(':')===-1){
+      if(mentionMenu){
+        mentionMenu.innerHTML=MENTION_TYPES.map(m=>'<button type="button" class="mention-pill" data-type="'+esc(m.type)+'" data-label="'+esc(m.label)+'">@'+esc(m.label)+'</button>').join('');
+        mentionMenu.style.display='block';
+        mentionMenu.querySelectorAll('.mention-pill').forEach(btn=>{
+          btn.addEventListener('mousedown',function(e){ e.preventDefault();
+            const typ=this.dataset.type, val=input.value, pos=input.selectionStart;
+            const start=val.slice(0,pos).lastIndexOf('@');
+            const before=val.slice(0,start), after=val.slice(pos);
+            const insert=typ==='workspace'?'@workspace ':'@'+typ+':';
+            input.value=before+insert+after;
+            input.selectionStart=input.selectionEnd=before.length+insert.length;
+            mentionMenu.style.display='none'; input.focus(); autoSz();
+            if(charCounter) charCounter.textContent=input.value.length.toString();
+          });
+        });
+      }
+      return;
+    }
+    vscode.postMessage({type:'getWorkspaceFiles',query:am[1]});
+    return;
+  }
+  if(mentionMenu) mentionMenu.style.display='none';
   hideFile();
 });
-input.addEventListener('blur',()=>setTimeout(()=>{ if(slashMenu) slashMenu.style.display='none'; },150));
+input.addEventListener('blur',()=>setTimeout(()=>{ if(slashMenu) slashMenu.style.display='none'; if(mentionMenu) mentionMenu.style.display='none'; },150));
 
 input.addEventListener('keydown',e=>{
   if(slashPopup.classList.contains('visible')){

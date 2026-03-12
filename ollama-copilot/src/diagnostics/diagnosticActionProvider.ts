@@ -19,14 +19,14 @@ export class OllamaDiagnosticActionProvider implements vscode.CodeActionProvider
     return relevant.map(diag => {
       const severity = diag.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning';
       const action = new vscode.CodeAction(
-        `Fix ${severity} with Ollama: ${diag.message.slice(0, 60)}${diag.message.length > 60 ? '…' : ''}`,
+        `Fix ${severity} with ClawPilot: ${diag.message.slice(0, 60)}${diag.message.length > 60 ? '…' : ''}`,
         vscode.CodeActionKind.QuickFix
       );
       action.diagnostics = [diag];
       action.isPreferred = false;
       action.command = {
-        command: 'ollamaCopilot.fixDiagnostic',
-        title: 'Fix with Ollama',
+        command: 'clawpilot.fixDiagnostic',
+        title: 'Fix with ClawPilot',
         arguments: [document, diag]
       };
       return action;

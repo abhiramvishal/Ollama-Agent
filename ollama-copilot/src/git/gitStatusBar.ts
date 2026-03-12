@@ -10,7 +10,7 @@ export class GitStatusBar {
       vscode.StatusBarAlignment.Left,
       85
     );
-    this._item.command = 'ollamaCopilot.askGitStatus';
+    this._item.command = 'clawpilot.askGitStatus';
     context.subscriptions.push(this._item);
 
     this._update();
@@ -29,7 +29,7 @@ export class GitStatusBar {
     const dirty = status.dirtyCount > 0 ? ` $(pencil)${status.dirtyCount}` : '';
     this._item.text = `$(git-branch) ${status.branch}${dirty}`;
     this._item.tooltip = status.dirtyCount > 0
-      ? `${status.dirtyCount} uncommitted change(s) — click to ask Ollama`
-      : `Branch: ${status.branch} — click to ask Ollama`;
+      ? `${status.dirtyCount} uncommitted change(s) — click to ask ClawPilot`
+      : `Branch: ${status.branch} — click to ask ClawPilot`;
   }
 }

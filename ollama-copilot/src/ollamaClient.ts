@@ -82,7 +82,7 @@ export class OllamaClient {
   private _config: vscode.WorkspaceConfiguration;
 
   constructor() {
-    this._config = vscode.workspace.getConfiguration('ollamaCopilot');
+    this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
   private get endpoint(): string {
@@ -91,7 +91,7 @@ export class OllamaClient {
   }
 
   refreshConfig(): void {
-    this._config = vscode.workspace.getConfiguration('ollamaCopilot');
+    this._config = vscode.workspace.getConfiguration('clawpilot');
   }
 
   async isAvailable(): Promise<boolean> {
@@ -117,6 +117,27 @@ export class OllamaClient {
     }
     const data = (await res.json()) as TagsResponse;
     return data.models ?? [];
+  }
+
+  /**
+   * Returns the best available model given a preferred name.
+   * - If the preferred model is installed, returns it.
+   * - Otherwise, returns the first installed model.
+   * - If listing models fails (e.g. offline), returns the preferred name as-is.
+   */
+  async getBestAvailableModel(preferred: string): Promise<string> {
+    try {
+      const models = await this.listModels();
+      if (models.some(m => m.name === preferred)) {
+        return preferred;
+      }
+      if (models.length > 0) {
+        return models[0].name;
+      }
+      return preferred;
+    } catch {
+      return preferred;
+    }
   }
 
   /** Models that support native Ollama tool calling via /api/chat tools field */
@@ -189,6 +210,39 @@ export class OllamaClient {
     } finally {
       reader.releaseLock();
     }
+  }
+
+  /**
+   * Stream chat with a primary model and an ordered list of fallbacks.
+   * Emits an informational chunk when switching models.
+   */
+  async *streamChatWithFallback(
+    messages: ChatMessage[],
+    primaryModel: string,
+    fallbackModels: string[],
+    maxTokens?: number
+  ): AsyncGenerator<string> {
+    const tried: string[] = [];
+    const models = [primaryModel, ...fallbackModels];
+    let isFirst = true;
+
+    for (const name of models) {
+      tried.push(name);
+      try {
+        if (!isFirst) {
+          yield `[ClawPilot: switching to fallback model: ${name}]`;
+        }
+        for await (const chunk of this.streamChat(messages, name, maxTokens)) {
+          yield chunk;
+        }
+        return;
+      } catch {
+        isFirst = false;
+        // Try next fallback model
+      }
+    }
+
+    throw new Error(`All models failed. Tried: ${tried.join(', ')}`);
   }
 
   async *streamGenerate(

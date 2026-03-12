@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 // Status bar item showing whether inline completions are on/off.
-// Clicking it toggles ollamaCopilot.inlineCompletionsEnabled.
+// Clicking it toggles clawpilot.inlineCompletionsEnabled.
 
 export class CompletionStatusBar {
   private _item: vscode.StatusBarItem;
@@ -11,14 +11,14 @@ export class CompletionStatusBar {
       vscode.StatusBarAlignment.Right,
       100
     );
-    this._item.command = 'ollamaCopilot.toggleCompletions';
+    this._item.command = 'clawpilot.toggleCompletions';
     context.subscriptions.push(this._item);
     this._update();
 
     // Re-render when config changes
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('ollamaCopilot.inlineCompletionsEnabled')) {
+        if (e.affectsConfiguration('clawpilot.inlineCompletionsEnabled')) {
           this._update();
         }
       })
@@ -28,12 +28,12 @@ export class CompletionStatusBar {
   }
 
   private _update(): void {
-    const enabled = vscode.workspace.getConfiguration('ollamaCopilot')
+    const enabled = vscode.workspace.getConfiguration('clawpilot')
       .get<boolean>('inlineCompletionsEnabled', true);
-    this._item.text = enabled ? '$(sparkle) Ollama' : '$(circle-slash) Ollama';
+    this._item.text = enabled ? '$(claw) ClawPilot' : '$(circle-slash) Ollama';
     this._item.tooltip = enabled
-      ? 'Ollama inline completions: ON (click to disable)'
-      : 'Ollama inline completions: OFF (click to enable)';
+      ? 'ClawPilot inline completions: ON (click to disable)'
+      : 'ClawPilot inline completions: OFF (click to enable)';
     this._item.color = enabled ? undefined : new vscode.ThemeColor('statusBarItem.warningForeground');
   }
 }

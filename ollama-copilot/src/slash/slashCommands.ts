@@ -28,7 +28,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: 'status',
     usage: '/status',
-    description: 'Ask Ollama to summarise the current git status',
+    description: 'Ask ClawPilot to summarise the current git status',
     expandTo:
       'Run git_status and git_log to summarise the current state of the repo. ' +
       'List modified files and the last 5 commits. Be concise.'
@@ -66,7 +66,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: 'model',
     usage: '/model <name>',
-    description: 'Switch the active Ollama model',
+    description: 'Switch the active model',
+    isDynamic: true
+  },
+  {
+    name: 'skills',
+    usage: '/skills',
+    description: 'List and invoke ClawPilot built-in and saved skills',
     isDynamic: true
   }
 ];

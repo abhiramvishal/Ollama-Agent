@@ -48,7 +48,7 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
         if (cts.token.isCancellationRequested) { resolve(null); return; }
 
         // Check config each time (user may toggle)
-        const cfg = vscode.workspace.getConfiguration('ollamaCopilot');
+        const cfg = vscode.workspace.getConfiguration('clawpilot');
         if (!cfg.get<boolean>('inlineCompletionsEnabled', true)) {
           resolve(null); return;
         }

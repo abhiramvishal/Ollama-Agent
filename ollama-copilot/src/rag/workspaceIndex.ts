@@ -191,26 +191,35 @@ export class WorkspaceIndex {
     }
   }
 
-  /** Query: return top-K chunks by similarity (embedding or BM25). */
+  /** Query: return top-K chunks by hybrid score (vector + BM25) or BM25 only. */
   async query(text: string, topK: number = 5): Promise<CodeChunk[]> {
     const k = Math.min(topK, this._chunks.length);
     if (k === 0) return [];
 
     const queryTokens = WorkspaceIndex.tokenize(text);
     const useEmbeddings = await this._embedder.isAvailable();
+    const config = vscode.workspace.getConfiguration('clawpilot');
+    const alpha = config.get<number>('ragHybridAlpha', 0.6);
 
     if (useEmbeddings) {
       try {
         const queryVec = await this._embedder.embed(text);
-        const scored = this._chunks.map(chunk => {
+        const withBm25 = this._chunks.map(chunk => {
           const vec = this._embedder.getCached(chunk.id);
-          const sim = vec ? Embedder.dot(queryVec, vec) : 0;
-          return { chunk, score: sim };
+          const vectorScore = vec ? Embedder.dot(queryVec, vec) : 0;
+          const bm25 = this.bm25Score(chunk, queryTokens);
+          return { chunk, vectorScore, bm25Score: bm25 };
+        });
+        const maxBm25 = Math.max(1, ...withBm25.map(x => x.bm25Score));
+        const scored = withBm25.map(({ chunk, vectorScore, bm25Score }) => {
+          const normalizedBm25 = bm25Score / maxBm25;
+          const hybridScore = alpha * vectorScore + (1 - alpha) * normalizedBm25;
+          return { chunk, score: hybridScore };
         });
         scored.sort((a, b) => b.score - a.score);
         return scored.slice(0, k).map(x => x.chunk);
       } catch {
-        // Fallback to BM25
+        // Fallback to BM25 only
       }
     }
 
@@ -224,7 +233,7 @@ export class WorkspaceIndex {
 
   /** Formatted context string for prompt injection. */
   async getContext(query: string): Promise<string> {
-    const config = vscode.workspace.getConfiguration('ollamaCopilot');
+    const config = vscode.workspace.getConfiguration('clawpilot');
     const topK = config.get<number>('ragTopK', 5);
     const enabled = config.get<boolean>('ragEnabled', true);
     if (!enabled || this._chunks.length === 0) return '';

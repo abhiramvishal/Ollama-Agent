@@ -31,7 +31,7 @@ export class OllamaCodeLensProvider implements vscode.CodeLensProvider {
     document: vscode.TextDocument,
     _token: vscode.CancellationToken
   ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
-    const enabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('codeLensEnabled', true);
+    const enabled = vscode.workspace.getConfiguration('clawpilot').get<boolean>('codeLensEnabled', true);
     if (!enabled) return [];
 
     const regex = getDeclRegex(document.languageId);
@@ -44,8 +44,8 @@ export class OllamaCodeLensProvider implements vscode.CodeLensProvider {
         const range = new vscode.Range(i, 0, i, (lines[i] ?? '').length);
         lenses.push(
           new vscode.CodeLens(range, {
-            title: '$(sparkle) Ollama',
-            command: 'ollamaCopilot.codeLensAction',
+            title: '$(claw) ClawPilot',
+            command: 'clawpilot.codeLensAction',
             arguments: [document.uri, i],
           })
         );
