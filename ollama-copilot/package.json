@@ -110,6 +110,26 @@
       {
         "command": "ollamaCopilot.fixDiagnostic",
         "title": "Ollama: Fix Diagnostic"
+      },
+      {
+        "command": "ollamaCopilot.newSession",
+        "title": "Ollama: New Chat Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ollamaCopilot.switchSession",
+        "title": "Ollama: Switch Session",
+        "icon": "$(history)"
+      },
+      {
+        "command": "ollamaCopilot.clearSession",
+        "title": "Ollama: Clear Current Session",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "ollamaCopilot.exportSession",
+        "title": "Ollama: Export Session to Markdown",
+        "icon": "$(export)"
       }
     ],
     "viewsContainers": {
@@ -131,6 +151,28 @@
       ]
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "ollamaCopilot.newSession",
+          "when": "view == ollamaCopilot.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ollamaCopilot.switchSession",
+          "when": "view == ollamaCopilot.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ollamaCopilot.clearSession",
+          "when": "view == ollamaCopilot.chatView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "ollamaCopilot.exportSession",
+          "when": "view == ollamaCopilot.chatView",
+          "group": "navigation@4"
+        }
+      ],
       "editor/context": [
         {
           "command": "ollamaCopilot.explain",

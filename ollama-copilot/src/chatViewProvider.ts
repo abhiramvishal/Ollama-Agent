@@ -8,6 +8,8 @@ import type { WorkspaceIndex } from './rag/workspaceIndex';
 import type { MemoryStore } from './memory/memoryStore';
 import type { SkillStore } from './memory/skillStore';
 import { formatDiffHtml } from './diff/diffEngine';
+import type { HistoryStore } from './history/historyStore';
+import type { ChatSession } from './history/historyStore';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'ollamaCopilot.chatView';
@@ -20,6 +22,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _chatHistory: ChatMessage[] = [];
     private _isAgentRunning = false;
     private _pendingPlanMessages: ChatMessage[] | null = null;
+    private _historyStore: HistoryStore | undefined;
+    private _activeSessionId: string | null = null;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -61,6 +65,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this._sendIndexStatus();
             this._sendMemoryData();
         }, 500);
+        if (this._historyStore) {
+            const session = this._historyStore.getOrCreateActiveSession();
+            this._activeSessionId = session.id;
+            this._sendHistoryToWebview(session);
+        }
     }
 
     public sendToChat(userMessage: string, codeContext?: string) {
@@ -80,6 +89,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await new Promise<void>(resolve => setTimeout(resolve, 150));
         this._view?.webview.postMessage({ type: 'injectPrompt', text: prompt });
         this._view?.webview.postMessage({ type: 'submitPrompt' });
+    }
+
+    public setHistoryStore(store: HistoryStore): void {
+        this._historyStore = store;
+        const session = store.getOrCreateActiveSession();
+        this._activeSessionId = session.id;
+        if (this._view) {
+            this._sendHistoryToWebview(session);
+        }
+    }
+
+    public switchSession(session: ChatSession): void {
+        this._activeSessionId = session.id;
+        this._historyStore?.setActiveSession(session.id);
+        this._sendHistoryToWebview(session);
+    }
+
+    public clearWebviewMessages(): void {
+        this._chatHistory = [];
+        this._view?.webview.postMessage({ type: 'clearMessages' });
+    }
+
+    private _sendHistoryToWebview(session: ChatSession): void {
+        const messages = session.messages.map(m =>
+            m.role === 'assistant'
+                ? { role: m.role, content: m.content, html: renderMarkdownToHtml(m.content) }
+                : m
+        );
+        this._view?.webview.postMessage({
+            type: 'loadHistory',
+            sessionName: session.name,
+            messages
+        });
+        this._chatHistory = session.messages.slice(-40).map(m => ({ role: m.role, content: m.content }));
     }
 
     private async _handleMessage(msg: any) {
@@ -292,6 +335,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         messages.push(...this._chatHistory);
         messages.push({ role: 'user', content: fullMessage });
 
+        if (this._historyStore && this._activeSessionId) {
+            this._historyStore.appendMessage(this._activeSessionId, {
+                role: 'user', content: text, timestamp: Date.now()
+            });
+        }
+
         if (isAgentTask) {
             await this._runAgent(messages, model, text, processedText);
         } else {
@@ -317,6 +366,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 html: renderMarkdownToHtml(fullResponse)
             });
             this._pushHistory(userMsg, fullResponse);
+            if (this._historyStore && this._activeSessionId) {
+                this._historyStore.appendMessage(this._activeSessionId, {
+                    role: 'assistant', content: fullResponse, timestamp: Date.now()
+                });
+            }
             await this._autoSaveRecall(userMsg, fullResponse, model);
         } catch (err: unknown) {
             this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -400,6 +454,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const diffPreviewEnabled = vscode.workspace.getConfiguration('ollamaCopilot').get<boolean>('diffPreviewEnabled', true);
             await this._agentRunner.run({ messages, model, onStep, diffPreviewEnabled });
             this._pushHistory(userMsg, fullTextResponse);
+            if (this._historyStore && this._activeSessionId) {
+                this._historyStore.appendMessage(this._activeSessionId, {
+                    role: 'assistant', content: fullTextResponse, timestamp: Date.now()
+                });
+            }
             await this._autoSaveRecall(userMsg, fullTextResponse, model);
         } catch (err: unknown) {
             this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -701,6 +760,7 @@ strong { font-weight: 700; } em { font-style: italic; }
   <button class="btn-icon" id="clearBtn" title="New chat">🗑</button>
   <button class="btn-icon" id="refreshBtn" title="Refresh">↻</button>
 </div>
+<div id="session-name" style="font-size:10px;color:var(--vscode-descriptionForeground);padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Current session"></div>
 <div class="model-bar">
   <select id="modelSelect"></select>
   <span class="mode-badge agent" id="modeBadge" title="Toggle agent/chat mode">⚡ Agent</span>
@@ -778,7 +838,7 @@ const $=id=>document.getElementById(id);
 const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('stopBtn');
 const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
 const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
-const emptyState=$('emptyState');
+const emptyState=$('emptyState'), sessionNameEl=$('session-name');
 
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
@@ -1068,6 +1128,21 @@ window.addEventListener('message',e=>{
     case 'injectMessage': input.value=m.text; if(m.codeContext)selText=m.codeContext; autoSz(); input.focus(); break;
     case 'injectPrompt': input.value=m.text||''; autoSz(); break;
     case 'submitPrompt': if(input.value.trim())send(); break;
+    case 'loadHistory':
+      msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='none';
+      if(sessionNameEl) sessionNameEl.textContent=m.sessionName||'';
+      for(const msg of (m.messages||[])){
+        if(msg.role==='user') addUser(msg.content);
+        else {
+          hideEmpty();
+          const d=document.createElement('div'); d.className='message assistant';
+          const b=document.createElement('div'); b.className='bubble';
+          b.innerHTML=msg.html||esc(msg.content); d.appendChild(b); msgs.appendChild(d); attachActions(b); scrollBot();
+        }
+      }
+      scrollBot();
+      break;
+    case 'clearMessages': msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='flex'; break;
     case 'error':
       if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
       setRunning(false); break;

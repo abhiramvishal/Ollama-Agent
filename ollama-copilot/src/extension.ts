@@ -12,6 +12,7 @@ import { OllamaCodeLensProvider } from './actions/codeLensProvider';
 import { OllamaDiagnosticActionProvider } from './diagnostics/diagnosticActionProvider';
 import { DiagnosticStatusBar } from './diagnostics/diagnosticStatusBar';
 import { buildDiagnosticPrompt } from './diagnostics/diagnosticPromptBuilder';
+import { HistoryStore } from './history/historyStore';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -47,6 +48,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             { webviewOptions: { retainContextWhenHidden: true } }
         )
     );
+    const historyStore = new HistoryStore(context);
+    chatProvider.setHistoryStore(historyStore);
 
     // Inline completions (ghost text)
     const initialModel = vscode.workspace.getConfiguration('ollamaCopilot').get<string>('model', 'llama3');
@@ -87,6 +90,62 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         )
     );
     new DiagnosticStatusBar(context);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.newSession', async () => {
+            const name = await vscode.window.showInputBox({
+                prompt: 'Session name (leave blank for default)',
+                placeHolder: 'My debugging session'
+            });
+            if (name === undefined) return;
+            const session = historyStore.createSession(name || undefined);
+            chatProvider.switchSession(session);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.switchSession', async () => {
+            const index = historyStore.getIndex();
+            if (!index.sessions.length) {
+                vscode.window.showInformationMessage('No saved sessions.');
+                return;
+            }
+            const items = index.sessions.map(s => ({
+                label: s.name,
+                description: new Date(s.updatedAt).toLocaleString(),
+                id: s.id
+            }));
+            const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Select a session' });
+            if (!pick) return;
+            const session = historyStore.loadSession(pick.id);
+            if (session) {
+                historyStore.setActiveSession(pick.id);
+                chatProvider.switchSession(session);
+            }
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.clearSession', async () => {
+            const id = historyStore.getActiveSessionId();
+            if (!id) return;
+            const confirm = await vscode.window.showWarningMessage(
+                'Clear all messages in this session?', 'Yes', 'Cancel'
+            );
+            if (confirm !== 'Yes') return;
+            historyStore.clearMessages(id);
+            chatProvider.clearWebviewMessages();
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.exportSession', async () => {
+            const id = historyStore.getActiveSessionId();
+            if (!id) return;
+            const md = historyStore.exportSession(id);
+            const doc = await vscode.workspace.openTextDocument({
+                content: md, language: 'markdown'
+            });
+            await vscode.window.showTextDocument(doc);
+        })
+    );
 
     // ── Commands ──
 
