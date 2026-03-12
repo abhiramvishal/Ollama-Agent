@@ -70,6 +70,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     isDynamic: true
   },
   {
+    name: 'install',
+    usage: '/install <model>',
+    description: 'Install (pull) a model via Ollama and switch to it',
+    isDynamic: true
+  },
+  {
     name: 'skills',
     usage: '/skills',
     description: 'List and invoke ClawPilot built-in and saved skills',

@@ -31,6 +31,7 @@ import { SetupWizard } from './system/setupWizard';
 import { openSetupPanel } from './webviews/setupPanel';
 import { openApiKeyPanel } from './webviews/apiKeyPanel';
 import { API_PROVIDER_TYPES } from './providers/llmProvider';
+import { scanSystem } from './system/systemScanner';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -66,7 +67,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    updateStatusBar(client);
+    void updateStatusBar(client);
     statusBarItem.command = 'clawpilot.openChat';
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
@@ -440,7 +441,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }
             chatProvider.setClient(client);
             completionProvider.setClient(client);
-            updateStatusBar(client);
+            await updateStatusBar(client);
             vscode.window.showInformationMessage(`ClawPilot: Using ${client.displayName}.`);
         })
     );
@@ -448,6 +449,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.commands.registerCommand('clawpilot.manageApiKeys', () => {
             openApiKeyPanel(context.extensionUri, context);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('clawpilot.doctor', async () => {
+            await openDoctorPanel(context.extensionUri, client, workspaceIndex, memoryStore);
         })
     );
 
@@ -493,7 +500,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 }
                 await vscode.workspace.getConfiguration('clawpilot')
                     .update('model', name, vscode.ConfigurationTarget.Global);
-                updateStatusBar(client, name);
+                await updateStatusBar(client, name);
             }
         })
     );
@@ -623,14 +630,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 client = detected;
                 chatProvider.setClient(client);
                 completionProvider.setClient(client);
-                updateStatusBar(client);
+                await updateStatusBar(client);
                 vscode.window.setStatusBarMessage(`ClawPilot: Auto-detected ${client.displayName}. Using it for this session.`, 8000);
             }
         }
     }
 
     // Startup health check
-    client.isAvailable().then(available => {
+    client.isAvailable().then(async available => {
         if (!available) {
             if (client.providerType === 'ollama') {
                 vscode.window.showWarningMessage(
@@ -646,10 +653,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     `ClawPilot: ${client.displayName} not found at ${client.baseEndpoint}.`
                 );
             }
-        } else {
-            const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
-            updateStatusBar(client, model);
         }
+        const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
+        await updateStatusBar(client, model);
     });
 
     // Update status bar on config change
@@ -657,15 +663,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('clawpilot.model')) {
                 const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
-                updateStatusBar(client, model);
+                void updateStatusBar(client, model);
                 completionProvider.updateModel(model || 'llama3');
             }
             if (e.affectsConfiguration('clawpilot.provider')) {
-                createProvider(context).then(p => {
+                createProvider(context).then(async p => {
                     client = p;
                     chatProvider.setClient(client);
                     completionProvider.setClient(client);
-                    updateStatusBar(client);
+                    await updateStatusBar(client);
                 }).catch(err => {
                     const msg = err instanceof Error ? err.message : String(err);
                     if (msg.includes('API key')) {
@@ -677,6 +683,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }
         })
     );
+
+    // First-launch onboarding: open Setup panel if never completed
+    const onboardingComplete = context.globalState.get<boolean>('clawpilot.onboardingComplete');
+    if (!onboardingComplete) {
+        openSetupPanel(context.extensionUri, context);
+    }
 
     // System intelligence & first-run setup
     void new SetupWizard().run(context);
@@ -712,12 +724,135 @@ async function pullModelWithProgress(client: OllamaClient, name: string): Promis
     }
 }
 
-function updateStatusBar(client: LLMProvider, model?: string): void {
-    const m = model ?? vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
+async function openDoctorPanel(
+    extensionUri: vscode.Uri,
+    client: LLMProvider,
+    workspaceIndex: WorkspaceIndex,
+    memoryStore: MemoryStore
+): Promise<void> {
+    const panel = vscode.window.createWebviewPanel(
+        'clawpilot.doctor',
+        'ClawPilot: System Diagnostics',
+        vscode.ViewColumn.One,
+        { enableScripts: false }
+    );
+    const cfg = vscode.workspace.getConfiguration('clawpilot');
+    const provider = cfg.get<string>('provider', 'ollama');
+    const model = cfg.get<string>('model', '');
+    let sys: Awaited<ReturnType<typeof scanSystem>>;
+    try {
+        sys = await scanSystem();
+    } catch (e) {
+        sys = {
+            platform: 'win32',
+            arch: 'unknown',
+            totalRamGB: 0,
+            gpuInfo: [],
+            vramGB: null,
+            cpuCores: 0,
+            ollamaInstalled: false,
+            ollamaRunning: false,
+            lmstudioRunning: false,
+            installedOllamaModels: [],
+            diskFreeGB: 0,
+        };
+    }
+    const providerOk = await client.isAvailable();
+    const idxStatus = workspaceIndex.status;
+    const recallCount = memoryStore.getRecallCount();
+    const archivalCount = memoryStore.getArchivalCount();
+    const suggestions: string[] = [];
+    if (!providerOk) {
+        if (provider === 'ollama') {
+            suggestions.push('Start Ollama: run `ollama serve` in a terminal, or use **ClawPilot: Setup** to install and start.');
+        } else {
+            suggestions.push(`Ensure ${client.displayName} is running at ${client.baseEndpoint}.`);
+        }
+    }
+    if (providerOk && !model) {
+        suggestions.push('Select a model via the chat header (provider badge) or **ClawPilot: Select Model**.');
+    }
+    if (provider === 'ollama' && !sys.ollamaInstalled) {
+        suggestions.push('Install Ollama: use **ClawPilot: Setup** or visit https://ollama.com');
+    }
+    if (idxStatus.chunkCount === 0 && !idxStatus.isIndexing) {
+        suggestions.push('Index the workspace for better RAG: run **ClawPilot: Re-index Workspace**.');
+    }
+    function fmtSuggestion(s: string): string {
+        return escapeHtml(s)
+            .replace(/\*\*(.*?)\*\*/g, (_, x) => '<strong>' + escapeHtml(x) + '</strong>')
+            .replace(/`(.*?)`/g, (_, x) => '<code>' + escapeHtml(x) + '</code>');
+    }
+    const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>ClawPilot Diagnostics</title></head>
+<body style="font-family: var(--vscode-font-family); font-size: 13px; padding: 16px; color: var(--vscode-foreground);">
+<h1 style="font-size: 18px;">ClawPilot System Diagnostics</h1>
+<h2 style="font-size: 14px; margin-top: 16px;">Provider</h2>
+<p><strong>Current:</strong> ${escapeHtml(client.displayName)}</p>
+<p><strong>Status:</strong> ${providerOk ? '✓ Running' : '✗ Not available'}</p>
+<p><strong>Model:</strong> ${escapeHtml(model || '— not set')}</p>
+<h2 style="font-size: 14px; margin-top: 16px;">System</h2>
+<p><strong>Platform:</strong> ${escapeHtml(sys.platform)} / ${escapeHtml(sys.arch)}</p>
+<p><strong>RAM:</strong> ${sys.totalRamGB.toFixed(1)} GB</p>
+<p><strong>CPU cores:</strong> ${sys.cpuCores}</p>
+${sys.vramGB != null ? `<p><strong>VRAM:</strong> ${sys.vramGB.toFixed(1)} GB</p>` : ''}
+${sys.gpuInfo.length ? `<p><strong>GPU:</strong> ${escapeHtml(sys.gpuInfo.slice(0, 3).join('; '))}</p>` : ''}
+<p><strong>Disk free:</strong> ${sys.diskFreeGB.toFixed(0)} GB</p>
+<h2 style="font-size: 14px; margin-top: 16px;">Ollama</h2>
+<p><strong>Installed:</strong> ${sys.ollamaInstalled ? 'Yes' : 'No'}</p>
+<p><strong>Running:</strong> ${sys.ollamaRunning ? 'Yes' : 'No'}</p>
+${sys.installedOllamaModels.length ? `<p><strong>Models:</strong> ${escapeHtml(sys.installedOllamaModels.join(', '))}</p>` : ''}
+<h2 style="font-size: 14px; margin-top: 16px;">Workspace index</h2>
+<p><strong>Chunks indexed:</strong> ${idxStatus.chunkCount}</p>
+<p><strong>Status:</strong> ${idxStatus.isIndexing ? 'Indexing…' : idxStatus.chunkCount > 0 ? 'Ready' : 'Not indexed'}</p>
+<h2 style="font-size: 14px; margin-top: 16px;">Memory store</h2>
+<p><strong>Recall entries:</strong> ${recallCount}</p>
+<p><strong>Archival entries:</strong> ${archivalCount}</p>
+${suggestions.length ? `<h2 style="font-size: 14px; margin-top: 16px;">Suggestions</h2><ul>${suggestions.map(s => `<li>${fmtSuggestion(s)}</li>`).join('')}</ul>` : ''}
+</body>
+</html>`;
+    panel.webview.html = html;
+}
+
+function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+async function updateStatusBar(client: LLMProvider, model?: string): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('clawpilot');
+    const m = model ?? cfg.get<string>('model', '');
     const isApi = API_PROVIDER_TYPES.includes(client.providerType);
     const providerLabel = isApi ? `${client.displayName} (API)` : client.displayName;
-    statusBarItem.text = m ? `$(claw) ClawPilot [${providerLabel}]: ${m}` : `$(claw) ClawPilot [${providerLabel}]`;
-    statusBarItem.tooltip = 'ClawPilot — click to open chat';
+    let icon = '$(primitive-dot)';
+    let tooltip = 'ClawPilot — click to open chat';
+    try {
+        const available = await client.isAvailable();
+        if (isApi) {
+            icon = '$(cloud)';
+            tooltip = available ? `ClawPilot · ${providerLabel} · ${m || 'no model'}` : `ClawPilot · ${providerLabel} · not available`;
+        } else {
+            if (available && m) {
+                icon = '$(pass)';
+                tooltip = `ClawPilot · ${providerLabel} · ${m} · ready`;
+            } else if (available) {
+                icon = '$(warning)';
+                tooltip = `ClawPilot · ${providerLabel} · no model selected`;
+            } else {
+                icon = '$(error)';
+                tooltip = `ClawPilot · ${providerLabel} · not available`;
+            }
+        }
+    } catch {
+        icon = '$(error)';
+        tooltip = `ClawPilot · ${providerLabel} · error`;
+    }
+    statusBarItem.text = m ? `$(claw) ${icon} [${providerLabel}]: ${m}` : `$(claw) ${icon} [${providerLabel}]`;
+    statusBarItem.tooltip = tooltip;
 }
 
 export function deactivate(): void {}

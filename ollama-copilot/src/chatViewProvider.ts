@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import type { LLMProvider, ChatMessage } from './providers/llmProvider';
 import { AgentRunner, AgentStep } from './agentRunner';
 import { AgentTools } from './tools/agentTools';
@@ -216,6 +217,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             case 'rejectDiff':
                 this._agentRunner.resolveDiff(msg.stepId, false);
                 break;
+            case 'runCommand':
+                if (typeof msg.command === 'string') {
+                    vscode.commands.executeCommand(msg.command);
+                }
+                break;
         }
     }
 
@@ -353,6 +359,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         type: 'assistantMessage',
                         html: renderMarkdownToHtml(`Switched model to \`${arg.trim()}\`.`)
                     });
+                    return;
+                }
+                case 'install': {
+                    const modelArg = arg.trim();
+                    if (!modelArg) {
+                        this._view?.webview.postMessage({
+                            type: 'assistantMessage',
+                            html: renderMarkdownToHtml('Usage: `/install <model>` — e.g. `/install qwen2.5-coder:7b`')
+                        });
+                        return;
+                    }
+                    await this._handleInstallModel(modelArg);
                     return;
                 }
                 case 'skills': {
@@ -650,14 +668,71 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const config = vscode.workspace.getConfiguration('clawpilot');
             const current = config.get<string>('model', 'llama3');
             this._view?.webview.postMessage({ type: 'models', models, current });
+            const ok = await this._client.isAvailable();
+            this._view?.webview.postMessage({
+                type: 'providerModelStatus',
+                providerLabel: this._client.displayName,
+                model: current || '',
+                connected: ok,
+            });
         } catch {
             this._view?.webview.postMessage({ type: 'models', models: [], current: '' });
+            this._view?.webview.postMessage({
+                type: 'providerModelStatus',
+                providerLabel: this._client.displayName,
+                model: '',
+                connected: false,
+            });
         }
     }
 
     private async _checkConnection() {
         const ok = await this._client.isAvailable();
+        const config = vscode.workspace.getConfiguration('clawpilot');
+        const model = config.get<string>('model', '');
         this._view?.webview.postMessage({ type: 'connectionStatus', connected: ok });
+        this._view?.webview.postMessage({
+            type: 'providerModelStatus',
+            providerLabel: this._client.displayName,
+            model: model || '',
+            connected: ok,
+        });
+    }
+
+    private async _handleInstallModel(modelName: string): Promise<void> {
+        if (!this._client.pullModel) {
+            this._view?.webview.postMessage({
+                type: 'assistantMessage',
+                html: renderMarkdownToHtml('`/install` is only available for the **Ollama** provider. Switch provider in the header or settings.')
+            });
+            return;
+        }
+        this._view?.webview.postMessage({ type: 'installStart', model: modelName });
+        const proc = spawn('ollama', ['pull', modelName], { shell: true, windowsHide: true });
+        const lines: string[] = [];
+        proc.stdout?.on('data', (d: Buffer) => {
+            const line = d.toString().trim();
+            if (line) {
+                lines.push(line);
+                this._view?.webview.postMessage({ type: 'installProgress', line });
+            }
+        });
+        proc.stderr?.on('data', (d: Buffer) => {
+            const line = d.toString().trim();
+            if (line) {
+                lines.push(line);
+                this._view?.webview.postMessage({ type: 'installProgress', line });
+            }
+        });
+        proc.on('close', async code => {
+            if (code === 0) {
+                await vscode.workspace.getConfiguration('clawpilot').update('model', modelName, vscode.ConfigurationTarget.Global);
+                this._view?.webview.postMessage({ type: 'setModel', model: modelName });
+                this._view?.webview.postMessage({ type: 'installDone', model: modelName, success: true });
+            } else {
+                this._view?.webview.postMessage({ type: 'installDone', model: modelName, success: false, error: `Exit code ${code}` });
+            }
+        });
     }
 
     private _sendSelectionContext() {
@@ -717,18 +792,28 @@ body {
   display: flex; flex-direction: column; height: 100vh; overflow: hidden;
 }
 .header {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border);
   flex-shrink: 0;
 }
-.header-title { font-weight: 600; font-size: 13px; flex: 1; }
+.provider-badge {
+  flex: 1; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  color: var(--vscode-foreground); background: transparent; border: none; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.provider-badge:hover { background: var(--vscode-toolbar-hoverBackground); }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
 .status-dot.connected { background: #4caf50; }
 .btn-icon {
-  background: none; border: none; cursor: pointer; padding: 3px 5px;
-  color: var(--vscode-foreground); opacity: 0.7; font-size: 14px; border-radius: 4px;
+  background: none; border: none; cursor: pointer; padding: 4px 6px;
+  color: var(--vscode-foreground); opacity: 0.8; font-size: 14px; border-radius: 4px;
 }
 .btn-icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+.empty-state-setup { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; }
+.empty-state-setup.visible { display: flex; }
+.empty-state-setup .empty-title { font-size: 14px; font-weight: 600; }
+.empty-state-setup .empty-sub { font-size: 12px; opacity: 0.8; margin-bottom: 8px; }
+.empty-state-setup .quick-btn { margin-top: 8px; }
 .model-bar {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 10px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0;
@@ -881,9 +966,9 @@ strong { font-weight: 700; } em { font-style: italic; }
 <body>
 <div class="header">
   <div class="status-dot" id="statusDot"></div>
-  <span class="header-title">ClawPilot</span>
-  <button class="btn-icon" id="clearBtn" title="New chat">🗑</button>
-  <button class="btn-icon" id="refreshBtn" title="Refresh">↻</button>
+  <button class="provider-badge" id="providerBadge" title="Change provider">ClawPilot</button>
+  <button class="btn-icon" id="setupBtn" title="Setup">⚙</button>
+  <button class="btn-icon" id="newSessionBtn" title="New session">+</button>
 </div>
 <div id="session-name" style="font-size:10px;color:var(--vscode-descriptionForeground);padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Current session"></div>
 <div class="model-bar">
@@ -912,6 +997,11 @@ strong { font-weight: 700; } em { font-style: italic; }
 </div>
 <div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
 <div class="messages" id="messages">
+  <div class="empty-state-setup" id="emptyStateNoSetup">
+    <div class="empty-title">No local model running</div>
+    <div class="empty-sub">Click Setup to install Ollama and a model, or choose another provider.</div>
+    <button class="quick-btn" id="setupEmptyBtn">Setup</button>
+  </div>
   <div class="empty-state" id="emptyState">
     <div class="empty-icon">🤖</div>
     <div class="empty-title">ClawPilot</div>
@@ -966,10 +1056,10 @@ const $=id=>document.getElementById(id);
 const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('stopBtn');
 const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
 const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
-const emptyState=$('emptyState'), sessionNameEl=$('session-name');
+const emptyState=$('emptyState'), emptyStateNoSetup=$('emptyStateNoSetup'), sessionNameEl=$('session-name');
 const charCounter=$('char-counter'), slashMenu=$('slash-menu'), mentionMenu=$('mention-menu');
 const MENTION_TYPES = [{ type:'file', label:'file' }, { type:'git', label:'git' }, { type:'symbol', label:'symbol' }, { type:'memory', label:'memory' }, { type:'workspace', label:'workspace' }];
-let allCommands = [];
+let allCommands = [], needSetup = true;
 
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
@@ -982,15 +1072,10 @@ modeBadge.onclick=()=>{
   modeBadge.textContent=agentMode?'⚡ Agent':'💬 Chat';
   modeBadge.classList.toggle('agent',agentMode);
 };
-$('clearBtn').onclick=()=>{
-  vscode.postMessage({type:'clearChat'});
-  msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='flex';
-  attachedFiles=[]; currentBubble=null; currentStepsEl=null;
-};
-$('refreshBtn').onclick=()=>{
-  vscode.postMessage({type:'getModels'});
-  vscode.postMessage({type:'getConnectionStatus'});
-};
+$('providerBadge').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.selectProvider'});
+$('setupBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.setup'});
+$('newSessionBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.newSession'});
+if($('setupEmptyBtn')) $('setupEmptyBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.setup'});
 $('reindexBtn').onclick=()=>vscode.postMessage({type:'reindexWorkspace'});
 $('memoryBtn').onclick=()=>{ const p=$('memoryPanel'); p.classList.toggle('open',!p.classList.contains('open')); };
 $('memorySaveBtn').onclick=()=>{
@@ -1129,7 +1214,7 @@ function agentEnd(){
   stopBtn.disabled=false; stopBtn.textContent='\u25A0 Stop';
 }
 
-function hideEmpty(){emptyState.style.display='none';}
+function hideEmpty(){emptyState.style.display='none';if(emptyStateNoSetup) emptyStateNoSetup.classList.remove('visible');}
 function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -1271,6 +1356,13 @@ window.addEventListener('message',e=>{
     case 'planRejected': agentEnd(); break;
     case 'models': renderModels(m.models,m.current); break;
     case 'connectionStatus': statusDot.classList.toggle('connected',m.connected); break;
+    case 'providerModelStatus':{
+      const badge=$('providerBadge'); if(badge) badge.textContent=(m.providerLabel||'ClawPilot')+(m.model?' • '+m.model:'');
+      needSetup=!m.connected||!m.model;
+      if(emptyStateNoSetup) emptyStateNoSetup.classList.toggle('visible',needSetup);
+      if(emptyState) emptyState.style.display=needSetup?'none':'flex';
+      break;
+    }
     case 'indexStatus':
       const statusEl=$('indexStatus');
       if(statusEl){
@@ -1302,7 +1394,7 @@ window.addEventListener('message',e=>{
     case 'injectPrompt': input.value=m.text||''; autoSz(); break;
     case 'submitPrompt': if(input.value.trim())send(); break;
     case 'loadHistory':
-      msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='none';
+      msgs.innerHTML=''; if(emptyStateNoSetup) msgs.appendChild(emptyStateNoSetup); msgs.appendChild(emptyState); emptyState.style.display='none'; emptyStateNoSetup.classList.remove('visible');
       if(sessionNameEl) sessionNameEl.textContent=m.sessionName||'';
       for(const msg of (m.messages||[])){
         if(msg.role==='user') addUser(msg.content);
@@ -1315,7 +1407,7 @@ window.addEventListener('message',e=>{
       }
       scrollBot();
       break;
-    case 'clearMessages': msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='flex'; break;
+    case 'clearMessages': msgs.innerHTML=''; if(emptyStateNoSetup) msgs.appendChild(emptyStateNoSetup); msgs.appendChild(emptyState); emptyState.style.display=needSetup?'none':'flex'; if(emptyStateNoSetup) emptyStateNoSetup.classList.toggle('visible',needSetup); break;
     case 'error':
       if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
       agentEnd(); break;
@@ -1328,6 +1420,19 @@ window.addEventListener('message',e=>{
       ad.appendChild(ab); msgs.appendChild(ad); attachActions(ab); scrollBot();
       break;
     case 'setModel': if(modelSel&&m.model){ modelSel.value=m.model; vscode.postMessage({type:'changeModel',model:m.model}); } break;
+    case 'installStart':
+      hideEmpty();
+      { const d=document.createElement('div'); d.className='message assistant'; const b=document.createElement('div'); b.className='bubble install-log'; b.innerHTML='<div style="font-family:monospace;font-size:11px;white-space:pre-wrap;">Installing '+esc(m.model)+'...<\/div>'; d.appendChild(b); msgs.appendChild(d); window._installLogEl=b.querySelector('div'); scrollBot(); }
+      break;
+    case 'installProgress':
+      if(window._installLogEl) { window._installLogEl.textContent+=(window._installLogEl.textContent?'\n':'')+m.line; scrollBot(); }
+      break;
+    case 'installDone':
+      if(window._installLogEl) {
+        window._installLogEl.textContent+='\n'+(m.success?'✓ Done. Switched to '+m.model+'.':'✗ Failed. '+(m.error||''));
+        window._installLogEl=null;
+      }
+      break;
   }
 });
 
@@ -1337,8 +1442,8 @@ function renderModels(models,current){
   models.forEach(m=>{
     const o=document.createElement('option');
     o.value=m.name;
-    const gb=(m.size/1e9).toFixed(1);
-    o.textContent=m.name+' ('+gb+'GB)';
+    const sizeStr=m.size!=null?(m.size/1e9).toFixed(1)+'GB':'';
+    o.textContent=m.name+(sizeStr?' ('+sizeStr+')':'');
     if(m.name===current)o.selected=true;
     modelSel.appendChild(o);
   });

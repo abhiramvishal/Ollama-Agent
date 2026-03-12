@@ -163,6 +163,9 @@ export function openSetupPanel(extensionUri: vscode.Uri, context: vscode.Extensi
     if (msg.command === 'scanSystem') {
       try {
         const info = await scanSystem();
+        if (info.ollamaRunning && info.installedOllamaModels?.length > 0) {
+          await context.globalState.update('clawpilot.onboardingComplete', true);
+        }
         panel.webview.postMessage({ command: 'systemInfo', data: info });
         const recs = recommendModels(info);
         panel.webview.postMessage({ command: 'recommendations', data: recs });
@@ -206,6 +209,7 @@ export function openSetupPanel(extensionUri: vscode.Uri, context: vscode.Extensi
           send('', 100);
           const cfg = vscode.workspace.getConfiguration('clawpilot');
           await cfg.update('model', model, vscode.ConfigurationTarget.Global);
+          await context.globalState.update('clawpilot.onboardingComplete', true);
           panel.webview.postMessage({ command: 'done', model });
         } else {
           send(`Pull exited with code ${code}`);

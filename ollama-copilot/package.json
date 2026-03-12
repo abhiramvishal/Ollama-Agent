@@ -177,6 +177,10 @@
         "title": "ClawPilot: Manage API Keys"
       },
       {
+        "command": "clawpilot.doctor",
+        "title": "ClawPilot: System Diagnostics"
+      },
+      {
         "command": "clawpilot.toggleProxy",
         "title": "ClawPilot: Toggle Local Proxy"
       }
