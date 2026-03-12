@@ -28,6 +28,8 @@
 
 ## Releasing a new version
 
+**Where to update the version:** In **`package.json`**, change the `"version"` field (e.g. `"1.0.1"` → `"1.0.2"`). Do this for every change you want to publish—the marketplace rejects duplicate versions.
+
 1. **Bump the version** in `package.json` (e.g. `1.0.0` → `1.0.1`).
 2. **Commit and push** to your default branch.
 3. **Create and push a tag**:
