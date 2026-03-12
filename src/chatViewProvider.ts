@@ -821,13 +821,17 @@ body {
 .empty-state-setup .empty-sub { font-size: 12px; opacity: 0.8; margin-bottom: 8px; }
 .empty-state-setup .quick-btn { margin-top: 8px; }
 .model-bar {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0;
+}
+.model-bar-label {
+  font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground);
+  white-space: nowrap; flex-shrink: 0;
 }
 .model-bar select {
-  flex: 1; background: var(--vscode-dropdown-background);
+  flex: 1; min-width: 100px; background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
-  padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;
 }
 .index-bar {
   display: flex; align-items: center; gap: 6px; padding: 3px 10px;
@@ -860,11 +864,12 @@ body {
 .memory-panel .skill-row button { font-size: 10px; padding: 2px 6px; }
 .memory-panel .mem-save-btn { margin-top: 10px; padding: 5px 12px; font-size: 12px; }
 .mode-badge {
-  font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600;
+  font-size: 11px; padding: 4px 10px; border-radius: 10px; font-weight: 600;
   background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
   cursor: pointer; user-select: none; white-space: nowrap;
 }
 .mode-badge.agent { background: #7c3aed; color: #fff; }
+.mode-badge:not(.agent) { background: var(--vscode-badge-background); }
 .messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
 .messages::-webkit-scrollbar { width: 4px; }
 .messages::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 2px; }
@@ -879,7 +884,7 @@ body {
 .quick-btn {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
-  border: none; padding: 5px 10px; border-radius: 12px; cursor: pointer; font-size: 11px;
+  border: none; padding: 6px 12px; border-radius: 12px; cursor: pointer; font-size: 12px;
 }
 .quick-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
 .message { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
@@ -975,23 +980,24 @@ strong { font-weight: 700; } em { font-style: italic; }
 </head>
 <body>
 <div class="header">
-  <div class="status-dot" id="statusDot"></div>
-  <button class="provider-badge" id="providerBadge" title="Change provider">ClawPilot</button>
-  <button class="btn-icon" id="setupBtn" title="Setup">⚙</button>
-  <button class="btn-icon" id="newSessionBtn" title="New session">+</button>
+  <div class="status-dot" id="statusDot" title="Connection status"></div>
+  <button type="button" class="provider-badge" id="providerBadge" title="Change provider">ClawPilot</button>
+  <button type="button" class="btn-icon" id="setupBtn" title="Setup">&#9881;</button>
+  <button type="button" class="btn-icon" id="newSessionBtn" title="New session">+</button>
 </div>
 <div id="session-name" style="font-size:10px;color:var(--vscode-descriptionForeground);padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Current session"></div>
 <div class="model-bar">
-  <select id="modelSelect"></select>
-  <span class="mode-badge agent" id="modeBadge" title="Toggle agent/chat mode">⚡ Agent</span>
+  <label class="model-bar-label" for="modelSelect">Model</label>
+  <select id="modelSelect" title="Select model (requires Ollama or API)"></select>
+  <span class="mode-badge agent" id="modeBadge" title="Click to toggle: Agent = multi-step actions; Ask = single reply">Agent</span>
 </div>
 <div class="index-bar" id="indexBar">
   <span class="index-status" id="indexStatus"></span>
-  <button class="btn-icon index-refresh" id="reindexBtn" title="Re-index workspace">Re-index</button>
+  <button type="button" class="btn-icon index-refresh" id="reindexBtn" title="Re-index workspace">Re-index</button>
 </div>
 <div class="memory-bar" id="memoryBar">
   <span class="memory-summary" id="memorySummary">Memory: —</span>
-  <button class="btn-icon index-refresh" id="memoryBtn" title="View / Edit Memory">⚙ Memory</button>
+  <button type="button" class="btn-icon index-refresh" id="memoryBtn" title="View / Edit Memory">&#9881; Memory</button>
 </div>
 <div class="memory-panel" id="memoryPanel">
   <label>Project context (max 500)</label>
@@ -1003,26 +1009,26 @@ strong { font-weight: 700; } em { font-style: italic; }
   <input type="text" id="newKeyFact" placeholder="Add fact (max 100 chars)" maxlength="100" style="width:100%;margin-top:4px;padding:4px;font-size:11px;">
   <label>Skills</label>
   <div class="skills-list" id="skillsList"></div>
-  <button class="mem-save-btn btn-approve" id="memorySaveBtn">Save</button>
+  <button type="button" class="mem-save-btn btn-approve" id="memorySaveBtn">Save</button>
 </div>
 <div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
 <div class="messages" id="messages">
   <div class="empty-state-setup" id="emptyStateNoSetup">
     <div class="empty-title">No local model running</div>
     <div class="empty-sub">Click Setup to install Ollama and a model, or choose another provider.</div>
-    <button class="quick-btn" id="setupEmptyBtn">Setup</button>
+    <button type="button" class="quick-btn" id="setupEmptyBtn">Setup</button>
   </div>
   <div class="empty-state" id="emptyState">
     <div class="empty-icon">🤖</div>
     <div class="empty-title">ClawPilot</div>
     <div class="empty-sub">Local AI · No cloud · No API keys<br>Type <strong>/</strong> for commands, <strong>@</strong> to attach files</div>
     <div class="quick-actions">
-      <button class="quick-btn" data-cmd="/explain">Explain</button>
-      <button class="quick-btn" data-cmd="/fix">Fix bugs</button>
-      <button class="quick-btn" data-cmd="/refactor">Refactor</button>
-      <button class="quick-btn" data-cmd="/test">Write tests</button>
-      <button class="quick-btn" data-cmd="/plan ">Plan feature</button>
-      <button class="quick-btn" data-cmd="/review">Review</button>
+      <button type="button" class="quick-btn" data-cmd="/explain">Explain</button>
+      <button type="button" class="quick-btn" data-cmd="/fix">Fix bugs</button>
+      <button type="button" class="quick-btn" data-cmd="/refactor">Refactor</button>
+      <button type="button" class="quick-btn" data-cmd="/test">Write tests</button>
+      <button type="button" class="quick-btn" data-cmd="/plan ">Plan feature</button>
+      <button type="button" class="quick-btn" data-cmd="/review">Review</button>
     </div>
   </div>
 </div>
@@ -1030,14 +1036,14 @@ strong { font-weight: 700; } em { font-style: italic; }
   <div class="slash-popup" id="slashPopup"></div>
   <div class="file-popup" id="filePopup"></div>
 </div>
-<div class="hint">/ commands · @ attach files · Enter to send · Shift+Enter newline</div>
+<div class="hint">Enter to send · Shift+Enter new line · / commands · @ files</div>
 <div class="input-area" style="position:relative">
   <div id="slash-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;z-index:100;max-height:220px;overflow-y:auto;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
   <div id="mention-menu" class="mention-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;z-index:100;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
   <div class="input-row">
-    <textarea id="input" placeholder="Ask anything... or type / for commands" rows="1"></textarea>
-    <button id="stopBtn" title="Stop" style="display:none;background:#f87171;color:#000;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;flex-shrink:0;">&#9632; Stop</button>
-    <button class="send-btn" id="sendBtn">➤</button>
+    <textarea id="input" placeholder="Type a message... / for commands, @ for files" rows="1"></textarea>
+    <button type="button" id="stopBtn" title="Stop" style="display:none;background:#f87171;color:#000;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;flex-shrink:0;">&#9632; Stop</button>
+    <button type="button" class="send-btn" id="sendBtn" title="Send message (Enter)">Send</button>
   </div>
   <div id="char-counter" style="font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;padding:0 4px 2px;">0</div>
 </div>
@@ -1079,7 +1085,8 @@ setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 modeBadge.onclick=()=>{
   agentMode=!agentMode;
-  modeBadge.textContent=agentMode?'⚡ Agent':'💬 Chat';
+  modeBadge.textContent=agentMode?'Agent':'Ask';
+  modeBadge.title=agentMode?'Agent mode: multi-step tools (edit, run, plan). Click to switch to Ask.':'Ask mode: single reply. Click to switch to Agent.';
   modeBadge.classList.toggle('agent',agentMode);
 };
 $('providerBadge').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.selectProvider'});
@@ -1098,7 +1105,16 @@ modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.valu
 stopBtn.onclick=()=>{vscode.postMessage({type:'stopAgent'});stopBtn.disabled=true;stopBtn.textContent='Stopping…';};
 
 document.querySelectorAll('.quick-btn').forEach(b=>{
-  b.onclick=()=>{ input.value=b.dataset.cmd; autoSz(); showSlash(b.dataset.cmd); input.focus(); };
+  b.onclick=()=>{
+    const cmd=(b.dataset.cmd||'').trim();
+    if(!cmd){ input.focus(); return; }
+    input.value=cmd;
+    autoSz();
+    hideSlash();
+    hideFile();
+    if(input.value.trim()&&!isRunning) send();
+    else input.focus();
+  };
 });
 
 input.addEventListener('input',()=>{
@@ -1149,22 +1165,23 @@ input.addEventListener('input',()=>{
 input.addEventListener('blur',()=>setTimeout(()=>{ if(slashMenu) slashMenu.style.display='none'; if(mentionMenu) mentionMenu.style.display='none'; },150));
 
 input.addEventListener('keydown',e=>{
+  const isEnter=(e.key==='Enter'||e.keyCode===13)&&!e.shiftKey;
   if(slashPopup.classList.contains('visible')){
     const its=slashPopup.querySelectorAll('.slash-item');
-    if(e.key==='ArrowDown'){e.preventDefault();slashIdx=Math.min(slashIdx+1,its.length-1);hlSlash();return;}
-    if(e.key==='ArrowUp'){e.preventDefault();slashIdx=Math.max(slashIdx-1,0);hlSlash();return;}
-    if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();(its[Math.max(0,slashIdx)]||its[0])?.click();return;}
-    if(e.key==='Escape'){hideSlash();return;}
+    if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();slashIdx=Math.min(slashIdx+1,its.length-1);hlSlash();return;}
+    if(e.key==='ArrowUp'){e.preventDefault();e.stopPropagation();slashIdx=Math.max(slashIdx-1,0);hlSlash();return;}
+    if(isEnter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,slashIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){e.preventDefault();hideSlash();return;}
   }
   if(filePopup.classList.contains('visible')){
     const its=filePopup.querySelectorAll('.file-item');
-    if(e.key==='ArrowDown'){e.preventDefault();fileIdx=Math.min(fileIdx+1,its.length-1);hlFile();return;}
-    if(e.key==='ArrowUp'){e.preventDefault();fileIdx=Math.max(fileIdx-1,0);hlFile();return;}
-    if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();(its[Math.max(0,fileIdx)]||its[0])?.click();return;}
-    if(e.key==='Escape'){hideFile();return;}
+    if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();fileIdx=Math.min(fileIdx+1,its.length-1);hlFile();return;}
+    if(e.key==='ArrowUp'){e.preventDefault();e.stopPropagation();fileIdx=Math.max(fileIdx-1,0);hlFile();return;}
+    if(isEnter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,fileIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){e.preventDefault();hideFile();return;}
   }
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
-});
+  if(isEnter){e.preventDefault();e.stopPropagation();send();}
+},{capture:true});
 
 function autoSz(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px';}
 
@@ -1228,7 +1245,7 @@ function hideEmpty(){emptyState.style.display='none';if(emptyStateNoSetup) empty
 function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-var CONTEXT_SYMBOLS = { selection:'\u2702', activeFile:'\uD83D\uDCC4', workspaceRag:'\uD83D\uDD0D', gitDiff:'\u2393', diagnostics:'\u26A0', memory:'\uD83E\uDDE0', skills:'\u26A1', files:'\uD83D\uDCC1' };
+var CONTEXT_SYMBOLS = { selection:'[sel]', activeFile:'[file]', workspaceRag:'[rag]', gitDiff:'[diff]', diagnostics:'[diag]', memory:'[mem]', skills:'[skill]', files:'[files]' };
 function addUser(text, contextTypes){
   hideEmpty();
   const d=document.createElement('div'); d.className='message user';
@@ -1455,7 +1472,7 @@ window.addEventListener('message',e=>{
 
 function renderModels(models,current){
   modelSel.innerHTML='';
-  if(!models.length){const o=document.createElement('option');o.textContent='— No models —';modelSel.appendChild(o);return;}
+  if(!models.length){const o=document.createElement('option');o.textContent='No models (start Ollama or add API)';o.value='';modelSel.appendChild(o);modelSel.title='Install Ollama and pull a model, or set an API provider in Settings';return;}
   models.forEach(m=>{
     const o=document.createElement('option');
     o.value=m.name;
