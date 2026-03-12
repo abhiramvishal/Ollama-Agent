@@ -45,6 +45,10 @@
         "title": "ClawPilot: Open Chat"
       },
       {
+        "command": "clawpilot.setup",
+        "title": "ClawPilot: Setup / Install Local AI"
+      },
+      {
         "command": "clawpilot.explainCode",
         "title": "ClawPilot: Explain Code"
       },
@@ -169,6 +173,10 @@
         "title": "ClawPilot: Select Provider"
       },
       {
+        "command": "clawpilot.manageApiKeys",
+        "title": "ClawPilot: Manage API Keys"
+      },
+      {
         "command": "clawpilot.toggleProxy",
         "title": "ClawPilot: Toggle Local Proxy"
       }
@@ -289,7 +297,7 @@
       "properties": {
         "clawpilot.provider": {
           "type": "string",
-          "enum": ["ollama", "lmstudio", "llamafile", "vllm", "localai", "jan", "textgen-webui", "openai-compatible"],
+          "enum": ["ollama", "lmstudio", "llamafile", "vllm", "localai", "jan", "textgen-webui", "openai-compatible", "anthropic", "openai", "google"],
           "enumDescriptions": [
             "Ollama (localhost:11434)",
             "LM Studio (localhost:1234)",
@@ -298,10 +306,18 @@
             "LocalAI (localhost:8080)",
             "Jan (localhost:1337)",
             "Text Generation WebUI / oobabooga (localhost:5000)",
-            "Any OpenAI-compatible server (uses clawpilot.endpoint)"
+            "Any OpenAI-compatible server (uses clawpilot.endpoint)",
+            "Anthropic Claude (API key required)",
+            "OpenAI GPT (API key required)",
+            "Google Gemini (API key required)"
           ],
           "default": "ollama",
-          "description": "Which local LLM provider to use."
+          "description": "Which LLM provider to use. Local providers are free; API providers require keys (ClawPilot: Manage API Keys)."
+        },
+        "clawpilot.preferLocal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always try local providers first; fall back to API only if local provider is unavailable."
         },
         "clawpilot.autoDetectProvider": {
           "type": "boolean",

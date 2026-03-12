@@ -12,7 +12,10 @@ export type ProviderType =
   | 'localai'
   | 'jan'
   | 'textgen-webui'
-  | 'openai-compatible';
+  | 'openai-compatible'
+  | 'anthropic'
+  | 'openai'
+  | 'google';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -76,6 +79,9 @@ export const PROVIDER_DEFAULT_PORTS: Record<ProviderType, number> = {
   jan:                  1337,
   'textgen-webui':      5000,
   'openai-compatible':  11434,
+  anthropic:            443,
+  openai:               443,
+  google:               443,
 };
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderType, string> = {
@@ -87,4 +93,10 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderType, string> = {
   jan:                  'Jan',
   'textgen-webui':      'Text Generation WebUI',
   'openai-compatible':  'OpenAI-compatible server',
+  anthropic:            'Anthropic (API)',
+  openai:               'OpenAI (API)',
+  google:               'Google Gemini (API)',
 };
+
+/** Premium (cloud API) provider types; require API key from SecretStorage. */
+export const API_PROVIDER_TYPES: ProviderType[] = ['anthropic', 'openai', 'google'];

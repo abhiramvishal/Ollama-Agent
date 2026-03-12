@@ -27,6 +27,10 @@ import { createWorkspaceRagProvider } from './context/providers/workspaceRagProv
 import { createMemoryProvider } from './context/providers/memoryProvider';
 import { createSkillProvider } from './context/providers/skillProvider';
 import { ClawProxy } from './proxy/clawProxy';
+import { SetupWizard } from './system/setupWizard';
+import { openSetupPanel } from './webviews/setupPanel';
+import { openApiKeyPanel } from './webviews/apiKeyPanel';
+import { API_PROVIDER_TYPES } from './providers/llmProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -37,7 +41,19 @@ let proxy: ClawProxy | undefined;
 let client: LLMProvider;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    client = createProvider();
+    try {
+        client = await createProvider(context);
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('API key') && msg.includes('Manage API Keys')) {
+            vscode.window.showWarningMessage(msg, 'Open API Keys').then(choice => {
+                if (choice === 'Open API Keys') openApiKeyPanel(context.extensionUri, context);
+            });
+            client = new OllamaClient();
+        } else {
+            throw e;
+        }
+    }
     workspaceIndex = new WorkspaceIndex();
     workspaceIndex.startWatching();
     context.subscriptions.push({ dispose: () => workspaceIndex.dispose() });
@@ -199,7 +215,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     context.subscriptions.push(
         vscode.commands.registerCommand('clawpilot.openChat', () => {
+            const model = vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
+            if (!model.trim()) {
+                openSetupPanel(context.extensionUri, context);
+                return;
+            }
             vscode.commands.executeCommand('clawpilot.chatView.focus');
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('clawpilot.setup', () => {
+            openSetupPanel(context.extensionUri, context);
         })
     );
 
@@ -376,25 +403,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
-    // Provider selection
+    // Provider selection: local first, then separator, then Premium (API)
     context.subscriptions.push(
         vscode.commands.registerCommand('clawpilot.selectProvider', async () => {
-            const items: vscode.QuickPickItem[] = (Object.entries(PROVIDER_DISPLAY_NAMES) as [ProviderType, string][]).map(([type, label]) => ({
-                label,
-                detail: type
-            }));
+            const local: ProviderType[] = ['ollama', 'lmstudio', 'llamafile', 'vllm', 'localai', 'jan', 'textgen-webui', 'openai-compatible'];
+            const items: vscode.QuickPickItem[] = [];
+            local.forEach(type => {
+                items.push({ label: PROVIDER_DISPLAY_NAMES[type], detail: type });
+            });
+            items.push({ label: 'Premium (API)', kind: vscode.QuickPickItemKind.Separator });
+            API_PROVIDER_TYPES.forEach(type => {
+                items.push({ label: PROVIDER_DISPLAY_NAMES[type], detail: type });
+            });
             const picked = await vscode.window.showQuickPick(items, {
                 matchOnDescription: true,
                 placeHolder: 'Select LLM provider'
             });
             if (!picked?.detail) return;
-            await vscode.workspace.getConfiguration('clawpilot')
-                .update('provider', picked.detail, vscode.ConfigurationTarget.Global);
-            client = createProvider();
+            const chosen = picked.detail as ProviderType;
+            const cfg = vscode.workspace.getConfiguration('clawpilot');
+            const previous = cfg.get<string>('provider', 'ollama');
+            await cfg.update('provider', chosen, vscode.ConfigurationTarget.Global);
+            try {
+                client = await createProvider(context);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (msg.includes('API key') && msg.includes('Manage API Keys')) {
+                    await cfg.update('provider', previous, vscode.ConfigurationTarget.Global);
+                    vscode.window.showWarningMessage(msg, 'Open API Keys').then(choice => {
+                        if (choice === 'Open API Keys') openApiKeyPanel(context.extensionUri, context);
+                    });
+                    return;
+                }
+                await cfg.update('provider', previous, vscode.ConfigurationTarget.Global);
+                throw e;
+            }
             chatProvider.setClient(client);
             completionProvider.setClient(client);
             updateStatusBar(client);
             vscode.window.showInformationMessage(`ClawPilot: Using ${client.displayName}.`);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('clawpilot.manageApiKeys', () => {
+            openApiKeyPanel(context.extensionUri, context);
         })
     );
 
@@ -608,13 +661,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 completionProvider.updateModel(model || 'llama3');
             }
             if (e.affectsConfiguration('clawpilot.provider')) {
-                client = createProvider();
-                chatProvider.setClient(client);
-                completionProvider.setClient(client);
-                updateStatusBar(client);
+                createProvider(context).then(p => {
+                    client = p;
+                    chatProvider.setClient(client);
+                    completionProvider.setClient(client);
+                    updateStatusBar(client);
+                }).catch(err => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    if (msg.includes('API key')) {
+                        vscode.window.showWarningMessage(msg, 'Open API Keys').then(choice => {
+                            if (choice === 'Open API Keys') openApiKeyPanel(context.extensionUri, context);
+                        });
+                    }
+                });
             }
         })
     );
+
+    // System intelligence & first-run setup
+    void new SetupWizard().run(context);
 }
 
 function runSlashOnSelection(slash: string): void {
@@ -649,7 +714,8 @@ async function pullModelWithProgress(client: OllamaClient, name: string): Promis
 
 function updateStatusBar(client: LLMProvider, model?: string): void {
     const m = model ?? vscode.workspace.getConfiguration('clawpilot').get<string>('model', '');
-    const providerLabel = client.displayName;
+    const isApi = API_PROVIDER_TYPES.includes(client.providerType);
+    const providerLabel = isApi ? `${client.displayName} (API)` : client.displayName;
     statusBarItem.text = m ? `$(claw) ClawPilot [${providerLabel}]: ${m}` : `$(claw) ClawPilot [${providerLabel}]`;
     statusBarItem.tooltip = 'ClawPilot — click to open chat';
 }
