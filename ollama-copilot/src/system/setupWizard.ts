@@ -8,7 +8,6 @@ export class SetupWizard {
   async run(context: vscode.ExtensionContext): Promise<void> {
     const config = vscode.workspace.getConfiguration('clawpilot');
     const modelSet = config.get<string>('model', '').trim().length > 0;
-    const ranBefore = context.globalState.get<boolean>('clawpilot.setupRanOnce', false);
 
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'ClawPilot: Scanning your system...', cancellable: false },
@@ -34,7 +33,7 @@ export class SetupWizard {
         }
 
         if (info.ollamaRunning && info.installedOllamaModels.length === 0) {
-          if (!modelSet || !ranBefore) {
+          if (!modelSet) {
             await openSetupPanel(context.extensionUri, context);
           }
           context.globalState.update('clawpilot.setupRanOnce', true);

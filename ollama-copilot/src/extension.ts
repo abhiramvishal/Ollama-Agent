@@ -684,13 +684,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
-    // First-launch onboarding: open Setup panel if never completed
-    const onboardingComplete = context.globalState.get<boolean>('clawpilot.onboardingComplete');
-    if (!onboardingComplete) {
-        openSetupPanel(context.extensionUri, context);
-    }
-
-    // System intelligence & first-run setup
+    // System intelligence & first-run setup (single entry point for onboarding)
     void new SetupWizard().run(context);
 }
 

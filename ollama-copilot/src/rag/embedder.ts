@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ProviderType } from '../providers/llmProvider';
-import { PROVIDER_DEFAULT_PORTS } from '../providers/llmProvider';
+import { API_PROVIDER_TYPES, PROVIDER_DEFAULT_PORTS } from '../providers/llmProvider';
 
 const BATCH_SIZE = 10;
 const TIMEOUT_MS = 15000;
@@ -37,9 +37,15 @@ export class Embedder {
     return this._config.get<string>('provider', 'ollama') as ProviderType;
   }
 
+  /** Cloud API providers (anthropic, openai, google) do not expose local /v1/embeddings; use Ollama endpoint. */
+  private get _useOllamaForEmbedding(): boolean {
+    const provider = this._provider;
+    return provider === 'ollama' || API_PROVIDER_TYPES.includes(provider);
+  }
+
   private get _endpoint(): string {
     const provider = this._provider;
-    if (provider === 'ollama') {
+    if (provider === 'ollama' || API_PROVIDER_TYPES.includes(provider)) {
       const base = this._config.get<string>('endpoint', 'http://localhost:11434');
       return base.replace(/\/$/, '');
     }
@@ -64,7 +70,7 @@ export class Embedder {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     const endpoint = this._endpoint;
-    const useOpenAI = this._provider !== 'ollama';
+    const useOpenAI = !this._useOllamaForEmbedding;
     try {
       if (useOpenAI) {
         const res = await fetch(`${endpoint}/v1/embeddings`, {
@@ -120,7 +126,7 @@ export class Embedder {
       return this._cache.get(cacheKey)!;
     }
     this.refreshConfig();
-    const useOpenAI = this._provider !== 'ollama';
+    const useOpenAI = !this._useOllamaForEmbedding;
     const vec = useOpenAI
       ? await this._embedOpenAI([text], this.model).then(r => r[0])
       : await this._embedOllama([text], this.model).then(r => r[0]);
@@ -192,7 +198,7 @@ export class Embedder {
       }
     }
     this.refreshConfig();
-    const useOpenAI = this._provider !== 'ollama';
+    const useOpenAI = !this._useOllamaForEmbedding;
     const model = this.model;
     for (let b = 0; b < toFetch.length; b += BATCH_SIZE) {
       const batch = toFetch.slice(b, b + BATCH_SIZE);
