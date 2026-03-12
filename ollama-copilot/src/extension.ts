@@ -9,6 +9,9 @@ import { SkillStore } from './memory/skillStore';
 import { buildActionPrompt, getSelectionContext } from './actions/selectionActions';
 import type { ActionKind } from './actions/selectionActions';
 import { OllamaCodeLensProvider } from './actions/codeLensProvider';
+import { OllamaDiagnosticActionProvider } from './diagnostics/diagnosticActionProvider';
+import { DiagnosticStatusBar } from './diagnostics/diagnosticStatusBar';
+import { buildDiagnosticPrompt } from './diagnostics/diagnosticPromptBuilder';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -65,6 +68,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             );
         })
     );
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeActionsProvider(
+            '*',
+            new OllamaDiagnosticActionProvider(),
+            { providedCodeActionKinds: OllamaDiagnosticActionProvider.providedCodeActionKinds }
+        )
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'ollamaCopilot.fixDiagnostic',
+            async (document: vscode.TextDocument, diag: vscode.Diagnostic) => {
+                const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+                const prompt = buildDiagnosticPrompt(document, diag, root);
+                await chatProvider.sendQuickAction(prompt);
+            }
+        )
+    );
+    new DiagnosticStatusBar(context);
 
     // ── Commands ──
 

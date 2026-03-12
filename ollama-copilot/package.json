@@ -106,6 +106,10 @@
       {
         "command": "ollamaCopilot.toggleCompletions",
         "title": "Ollama: Toggle Inline Completions"
+      },
+      {
+        "command": "ollamaCopilot.fixDiagnostic",
+        "title": "Ollama: Fix Diagnostic"
       }
     ],
     "viewsContainers": {
