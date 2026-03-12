@@ -61,6 +61,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
             localResourceRoots: [this._extensionUri]
         };
+        this._isAgentRunning = false; // reset stale state on webview recreation
         webviewView.webview.html = this._getHtml();
         webviewView.webview.onDidReceiveMessage(msg => this._handleMessage(msg));
         webviewView.onDidChangeVisibility(() => {
@@ -180,6 +181,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 break;
             case 'stopAgent':
                 this._agentRunner.stop();
+                this._isAgentRunning = false;
                 break;
             case 'cancelAgent':
                 this._isAgentRunning = false;
@@ -789,239 +791,203 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ClawPilot</title>
 <style nonce="${nonce}">
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-  color: var(--vscode-foreground);
-  background: var(--vscode-sideBar-background);
-  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
-}
-.header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border);
-  flex-shrink: 0;
-}
-.provider-badge {
-  flex: 1; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 8px; border-radius: 6px;
-  color: var(--vscode-foreground); background: transparent; border: none; text-align: left;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
-}
-.provider-badge:hover { background: var(--vscode-toolbar-hoverBackground); }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
-.status-dot.connected { background: #4caf50; }
-.btn-icon {
-  background: none; border: none; cursor: pointer; padding: 4px 6px;
-  color: var(--vscode-foreground); opacity: 0.8; font-size: 14px; border-radius: 4px;
-}
-.btn-icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
-.empty-state-setup { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; }
-.empty-state-setup.visible { display: flex; }
-.empty-state-setup .empty-title { font-size: 14px; font-weight: 600; }
-.empty-state-setup .empty-sub { font-size: 12px; opacity: 0.8; margin-bottom: 8px; }
-.empty-state-setup .quick-btn { margin-top: 8px; }
-.model-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0;
-}
-.model-bar-label {
-  font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground);
-  white-space: nowrap; flex-shrink: 0;
-}
-.model-bar select {
-  flex: 1; min-width: 100px; background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
-  padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;
-}
-.index-bar {
-  display: flex; align-items: center; gap: 6px; padding: 3px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground);
-}
-.index-status { flex: 1; }
-.index-status.indexing::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle;
-  border: 2px solid var(--vscode-focusBorder); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.index-refresh { font-size: 11px; padding: 2px 6px; }
-.memory-bar {
-  display: flex; align-items: center; gap: 6px; padding: 3px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground);
-}
-.memory-summary { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.memory-panel {
-  display: none; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(0,0,0,0.05)); font-size: 12px;
-}
-.memory-panel.open { display: block; }
-.memory-panel label { display: block; margin-top: 8px; margin-bottom: 2px; font-weight: 600; }
-.memory-panel textarea { width: 100%; min-height: 50px; max-height: 80px; padding: 6px; font-size: 11px; resize: vertical;
-  background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
-.memory-panel .key-facts-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.memory-panel .key-fact-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px;
-  background: var(--vscode-badge-background); font-size: 11px; }
-.memory-panel .key-fact-tag button { background: none; border: none; cursor: pointer; padding: 0; opacity: 0.7; }
-.memory-panel .skills-list { margin-top: 6px; }
-.memory-panel .skill-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--vscode-panel-border); }
-.memory-panel .skill-row button { font-size: 10px; padding: 2px 6px; }
-.memory-panel .mem-save-btn { margin-top: 10px; padding: 5px 12px; font-size: 12px; }
-.mode-badge {
-  font-size: 11px; padding: 4px 10px; border-radius: 10px; font-weight: 600;
-  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
-  cursor: pointer; user-select: none; white-space: nowrap;
-}
-.mode-badge.agent { background: #7c3aed; color: #fff; }
-.mode-badge:not(.agent) { background: var(--vscode-badge-background); }
-.messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
-.messages::-webkit-scrollbar { width: 4px; }
-.messages::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 2px; }
-.empty-state {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 12px; padding: 20px; opacity: 0.8;
-}
-.empty-icon { font-size: 32px; }
-.empty-title { font-size: 14px; font-weight: 600; }
-.empty-sub { font-size: 11px; text-align: center; opacity: 0.7; }
-.quick-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 4px; }
-.quick-btn {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none; padding: 6px 12px; border-radius: 12px; cursor: pointer; font-size: 12px;
-}
-.quick-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
-.message { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
-.message.user { align-items: flex-end; }
-.message.assistant { align-items: flex-start; }
-.context-symbols {
-  font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
-}
-.context-symbols span { opacity: 0.85; }
-.bubble {
-  padding: 8px 12px; border-radius: 12px; max-width: 94%; word-break: break-word; line-height: 1.5; font-size: 13px;
-}
-.user .bubble { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-bottom-right-radius: 3px; }
-.assistant .bubble { background: var(--vscode-editor-inactiveSelectionBackground, var(--vscode-list-hoverBackground)); border-bottom-left-radius: 3px; }
-.agent-steps { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-bottom: 6px; }
-.agent-step {
-  display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px;
-  background: var(--vscode-list-hoverBackground); border-left: 3px solid #7c3aed;
-}
-.agent-step.success { border-left-color: #4caf50; }
-.agent-step.failure { border-left-color: #f44336; }
-.agent-step.reflection { border-left-color: #f59e0b; }
-.diff-block { border:1px solid var(--vscode-panel-border); border-radius:8px;
-  overflow:hidden; width:100%; margin:4px 0; font-family:monospace; font-size:11px; }
-.diff-header { background:rgba(124,58,237,0.15); padding:6px 10px;
-  font-size:11px; font-weight:600; color:#a78bfa; display:flex;
-  justify-content:space-between; align-items:center; }
-.diff-body { max-height:200px; overflow-y:auto; background:var(--vscode-editor-background); }
-.diff-line { padding:1px 10px; white-space:pre; }
-.diff-add { background:rgba(74,222,128,0.12); color:#4ade80; }
-.diff-remove { background:rgba(248,113,113,0.12); color:#f87171; }
-.diff-context { color:var(--vscode-descriptionForeground); }
-.diff-actions { display:flex; gap:6px; padding:6px 10px;
-  border-top:1px solid var(--vscode-panel-border); }
-.btn-approve-diff { background:#4ade80; color:#000; border:none; padding:4px 12px;
-  border-radius:5px; cursor:pointer; font-size:11px; font-weight:600; }
-.btn-reject-diff { background:#f87171; color:#000; border:none; padding:4px 12px;
-  border-radius:5px; cursor:pointer; font-size:11px; font-weight:600; }
-.step-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
-.step-body { flex: 1; min-width: 0; }
-.step-title { font-weight: 600; }
-.step-detail { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: pre-wrap; word-break: break-all; margin-top: 2px; max-height: 2.4em; overflow: hidden; cursor: pointer; }
-.step-detail.expanded { max-height: 120px; overflow-y: auto; }
-.plan-block { border: 1px solid #7c3aed; border-radius: 10px; overflow: hidden; width: 100%; margin: 4px 0; }
-.plan-header { background: rgba(124,58,237,0.15); padding: 8px 12px; font-size: 12px; font-weight: 600; color: #a78bfa; }
-.plan-content { padding: 10px 12px; font-size: 12px; }
-.plan-actions { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid rgba(124,58,237,0.3); }
-.btn-approve { background: #7c3aed; color: #fff; border: none; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
-.btn-approve:hover { background: #6d28d9; }
-.btn-reject { background: none; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-.code-block { position: relative; margin: 8px 0; }
-.code-lang { font-size: 10px; color: var(--vscode-descriptionForeground); padding: 4px 10px 0; font-family: monospace; }
-.code-block pre { background: var(--vscode-editor-background); padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); border: 1px solid var(--vscode-panel-border); white-space: pre; line-height: 1.5; }
-.code-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.2s; }
-.code-block:hover .code-actions { opacity: 1; }
-.code-actions button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-.thinking { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
-.thinking-dots { display: flex; gap: 3px; }
-.thinking-dots span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: bounce 1.2s infinite; }
-.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes bounce { 0%,80%,100% { transform:scale(0.6);opacity:0.5; } 40% { transform:scale(1);opacity:1; } }
-.sel-badge { display: none; align-items: center; gap: 4px; padding: 2px 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border-radius: 10px; font-size: 10px; margin: 0 10px 4px; }
-.sel-badge.visible { display: flex; }
-.input-area { border-top: 1px solid var(--vscode-panel-border); padding: 8px 10px; flex-shrink: 0; }
-.input-row { display: flex; align-items: flex-end; gap: 6px; background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 8px; padding: 4px 6px; }
-.input-row:focus-within { border-color: var(--vscode-focusBorder); }
-textarea { flex: 1; background: none; border: none; outline: none; resize: none; color: var(--vscode-input-foreground); font-family: inherit; font-size: 13px; line-height: 1.5; max-height: 180px; min-height: 22px; padding: 3px 2px; }
-.send-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 14px; flex-shrink: 0; height: 30px; }
-.send-btn:hover { background: var(--vscode-button-hoverBackground); }
-.send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.stop-btn { background: #f44336; color: #fff; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 11px; font-weight: 600; display: none; margin: 0 10px 4px; }
-.stop-btn.visible { display: block; }
-.slash-popup, .file-popup {
-  display: none; position: absolute; bottom: 100%; left: 10px; right: 10px;
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  border: 1px solid var(--vscode-panel-border); border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3); max-height: 200px; overflow-y: auto; z-index: 100;
-}
-.slash-popup.visible, .file-popup.visible { display: block; }
-.slash-item, .file-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; }
-.slash-item:hover, .slash-item.sel, .file-item:hover, .file-item.sel { background: var(--vscode-list-hoverBackground); }
-.slash-cmd { font-weight: 700; color: #a78bfa; font-size: 13px; min-width: 80px; }
-.slash-desc { color: var(--vscode-descriptionForeground); font-size: 11px; }
-.mention-menu { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; align-items: center; }
-.mention-pill { padding: 4px 10px; border-radius: 14px; font-size: 12px; cursor: pointer; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border: 1px solid var(--vscode-panel-border); }
-.mention-pill:hover { background: var(--vscode-list-hoverBackground); }
-.hint { font-size: 10px; color: var(--vscode-descriptionForeground); padding: 0 10px 4px; }
-p { margin: 4px 0; } h1,h2,h3 { margin: 8px 0 4px; } ul,ol { padding-left: 18px; } li { margin: 2px 0; }
-code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
-strong { font-weight: 700; } em { font-style: italic; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+/* ── Top bar ── */
+.topbar{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--vscode-panel-border);flex-shrink:0;min-height:36px}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#555;flex-shrink:0;transition:background .25s}
+.status-dot.ok{background:#4ade80}
+.provider-btn{flex:1;font-size:12px;font-weight:600;cursor:pointer;background:none;border:none;color:var(--vscode-foreground);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 4px;border-radius:4px}
+.provider-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
+.icon-btn{background:none;border:none;cursor:pointer;padding:4px 5px;color:var(--vscode-foreground);opacity:.7;font-size:14px;border-radius:4px;flex-shrink:0;line-height:1}
+.icon-btn:hover{opacity:1;background:var(--vscode-toolbar-hoverBackground)}
+.session-name{font-size:10px;color:var(--vscode-descriptionForeground);padding:1px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:13px}
+/* ── Toolbar: model + mode ── */
+.toolbar{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--vscode-panel-border);flex-shrink:0}
+.model-select{flex:1;min-width:0;background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border:1px solid var(--vscode-dropdown-border);padding:3px 6px;border-radius:5px;font-size:11px;cursor:pointer;outline:none}
+.mode-group{display:flex;gap:2px;flex-shrink:0}
+.mode-btn{font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;cursor:pointer;border:1px solid var(--vscode-panel-border);background:none;color:var(--vscode-descriptionForeground);white-space:nowrap;transition:all .15s}
+.mode-btn.active-agent{background:#7c3aed;color:#fff;border-color:#7c3aed}
+.mode-btn.active-ask{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+/* ── Status bar ── */
+.status-bar{display:flex;align-items:center;gap:4px;padding:2px 10px;border-bottom:1px solid var(--vscode-panel-border);font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0}
+.index-info{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.index-info.indexing::before{content:'';display:inline-block;width:8px;height:8px;margin-right:4px;vertical-align:middle;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.text-btn{background:none;border:none;cursor:pointer;font-size:10px;color:var(--vscode-descriptionForeground);padding:1px 4px;border-radius:3px;white-space:nowrap}
+.text-btn:hover{color:var(--vscode-foreground);background:var(--vscode-toolbar-hoverBackground)}
+/* ── Memory panel ── */
+.memory-panel{display:none;padding:8px 10px;border-bottom:1px solid var(--vscode-panel-border);background:var(--vscode-editor-inactiveSelectionBackground,rgba(0,0,0,.06));font-size:11px;max-height:220px;overflow-y:auto}
+.memory-panel.open{display:block}
+.memory-panel label{display:block;margin-top:6px;margin-bottom:2px;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;opacity:.7}
+.memory-panel textarea{width:100%;min-height:44px;max-height:70px;padding:5px;font-size:11px;resize:vertical;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:4px;outline:none}
+.key-facts-list{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.key-fact-tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:8px;background:var(--vscode-badge-background);font-size:10px}
+.key-fact-tag button{background:none;border:none;cursor:pointer;padding:0;opacity:.7;font-size:11px}
+.skills-list{margin-top:4px}
+.skill-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--vscode-panel-border)}
+.skill-row button{font-size:10px;padding:1px 5px}
+.mem-save-btn{margin-top:8px;padding:4px 10px;font-size:11px}
+/* ── Setup empty state ── */
+.empty-setup{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px;text-align:center}
+.empty-setup.visible{display:flex}
+.empty-setup-title{font-size:13px;font-weight:600}
+.empty-setup-sub{font-size:11px;opacity:.75;line-height:1.5}
+/* ── Messages area ── */
+.messages{flex:1;overflow-y:auto;padding:10px 10px 6px;display:flex;flex-direction:column;gap:10px}
+.messages::-webkit-scrollbar{width:3px}
+.messages::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background);border-radius:2px}
+/* ── Welcome state ── */
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px}
+.empty-icon{font-size:28px}
+.empty-title{font-size:14px;font-weight:700}
+.empty-sub{font-size:11px;text-align:center;opacity:.65;line-height:1.5}
+.quick-actions{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-top:2px}
+.quick-btn{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:5px 11px;border-radius:10px;cursor:pointer;font-size:11px}
+.quick-btn:hover{background:var(--vscode-button-secondaryHoverBackground)}
+/* ── Message bubbles ── */
+.message{display:flex;flex-direction:column;gap:3px;max-width:100%}
+.message.user{align-items:flex-end}
+.message.assistant{align-items:flex-start}
+.ctx-tags{font-size:9px;color:var(--vscode-descriptionForeground);display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:1px}
+.ctx-tag{background:var(--vscode-badge-background);padding:1px 5px;border-radius:4px;opacity:.8}
+.bubble{padding:7px 11px;border-radius:12px;max-width:94%;word-break:break-word;line-height:1.55;font-size:13px}
+.user .bubble{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-bottom-right-radius:3px}
+.assistant .bubble{background:var(--vscode-editor-inactiveSelectionBackground,var(--vscode-list-hoverBackground));border-bottom-left-radius:3px}
+/* ── Agent steps ── */
+.agent-steps{display:flex;flex-direction:column;gap:5px;width:100%;margin-bottom:5px}
+.agent-step{display:flex;align-items:flex-start;gap:7px;padding:5px 9px;border-radius:7px;font-size:11px;background:var(--vscode-list-hoverBackground);border-left:3px solid #7c3aed}
+.agent-step.success{border-left-color:#4ade80}
+.agent-step.failure{border-left-color:#f87171}
+.agent-step.reflection{border-left-color:#fbbf24}
+.step-icon{font-size:12px;flex-shrink:0;margin-top:1px}
+.step-body{flex:1;min-width:0}
+.step-title{font-weight:600}
+.step-detail{color:var(--vscode-descriptionForeground);font-size:10px;white-space:pre-wrap;word-break:break-all;margin-top:2px;max-height:2.2em;overflow:hidden;cursor:pointer}
+.step-detail.expanded{max-height:100px;overflow-y:auto}
+/* ── Diff block ── */
+.diff-block{border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;width:100%;margin:3px 0;font-family:monospace;font-size:11px}
+.diff-header{background:rgba(124,58,237,.12);padding:5px 9px;font-size:11px;font-weight:600;color:#a78bfa;display:flex;justify-content:space-between;align-items:center}
+.diff-body{max-height:180px;overflow-y:auto;background:var(--vscode-editor-background)}
+.diff-line{padding:1px 9px;white-space:pre}
+.diff-add{background:rgba(74,222,128,.1);color:#4ade80}
+.diff-remove{background:rgba(248,113,113,.1);color:#f87171}
+.diff-context{color:var(--vscode-descriptionForeground)}
+.diff-actions{display:flex;gap:5px;padding:5px 9px;border-top:1px solid var(--vscode-panel-border)}
+.btn-approve-diff{background:#4ade80;color:#000;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600}
+.btn-reject-diff{background:#f87171;color:#000;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600}
+/* ── Plan block ── */
+.plan-block{border:1px solid #7c3aed;border-radius:10px;overflow:hidden;width:100%;margin:3px 0}
+.plan-header{background:rgba(124,58,237,.12);padding:7px 11px;font-size:12px;font-weight:600;color:#a78bfa}
+.plan-content{padding:9px 11px;font-size:12px}
+.plan-actions{display:flex;gap:7px;padding:7px 11px;border-top:1px solid rgba(124,58,237,.3)}
+.btn-approve{background:#7c3aed;color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600}
+.btn-approve:hover{background:#6d28d9}
+.btn-reject{background:none;color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border);padding:4px 12px;border-radius:5px;cursor:pointer;font-size:12px}
+/* ── Code blocks ── */
+.code-block{position:relative;margin:6px 0}
+.code-lang{font-size:9px;color:var(--vscode-descriptionForeground);padding:3px 9px 0;font-family:monospace}
+.code-block pre{background:var(--vscode-editor-background);padding:9px;border-radius:5px;overflow-x:auto;font-size:11.5px;font-family:var(--vscode-editor-font-family,monospace);border:1px solid var(--vscode-panel-border);white-space:pre;line-height:1.5}
+.code-actions{position:absolute;top:5px;right:5px;display:flex;gap:3px;opacity:0;transition:opacity .15s}
+.code-block:hover .code-actions{opacity:1}
+.code-actions button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:2px 7px;border-radius:3px;cursor:pointer;font-size:10px}
+/* ── Thinking ── */
+.thinking{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12px;color:var(--vscode-descriptionForeground)}
+.thinking-dots{display:flex;gap:3px}
+.thinking-dots span{width:4px;height:4px;border-radius:50%;background:currentColor;animation:bounce 1.2s infinite}
+.thinking-dots span:nth-child(2){animation-delay:.2s}
+.thinking-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:scale(.6);opacity:.5}40%{transform:scale(1);opacity:1}}
+/* ── Slash / file popups ── */
+.popup{display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-panel-border);border-radius:8px;box-shadow:0 -4px 16px rgba(0,0,0,.35);max-height:200px;overflow-y:auto;z-index:100}
+.popup.open{display:block}
+.popup-item{display:flex;align-items:baseline;gap:8px;padding:6px 11px;cursor:pointer;font-size:12px}
+.popup-item:hover,.popup-item.hi{background:var(--vscode-list-hoverBackground)}
+.p-cmd{font-weight:700;color:#a78bfa;min-width:72px;flex-shrink:0}
+.p-desc{color:var(--vscode-descriptionForeground);font-size:11px}
+.file-item{padding:5px 11px;cursor:pointer;font-size:11px}
+.file-item:hover,.file-item.hi{background:var(--vscode-list-hoverBackground)}
+/* ── @mention popup ── */
+.mention-pop{display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background,var(--vscode-editor-background));border:1px solid var(--vscode-panel-border);border-radius:8px;z-index:100;box-shadow:0 -4px 12px rgba(0,0,0,.3);padding:6px 8px;flex-wrap:wrap;gap:5px}
+.mention-pop.open{display:flex}
+.m-pill{padding:3px 9px;border-radius:12px;font-size:11px;cursor:pointer;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);border:1px solid var(--vscode-panel-border)}
+.m-pill:hover{background:var(--vscode-list-hoverBackground)}
+/* ── Context bar ── */
+.ctx-bar{display:flex;align-items:center;gap:6px;padding:3px 10px;font-size:10px;color:var(--vscode-descriptionForeground);flex-shrink:0;border-top:1px solid var(--vscode-panel-border)}
+.ctx-track{width:56px;height:4px;border-radius:2px;background:rgba(128,128,128,.2);flex-shrink:0;overflow:hidden}
+.ctx-fill{height:100%;border-radius:2px;background:#4ade80;width:0%;transition:width .3s,background .3s}
+.ctx-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sel-pill{display:none;align-items:center;gap:3px;padding:1px 7px;background:var(--vscode-badge-background);border-radius:8px;font-size:10px;flex-shrink:0}
+.sel-pill.on{display:flex}
+/* ── Input area ── */
+.input-area{padding:4px 8px 8px;flex-shrink:0}
+.input-wrap{position:relative}
+.input-box{display:flex;align-items:flex-end;gap:5px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:10px;padding:5px 6px;transition:border-color .15s}
+.input-box:focus-within{border-color:var(--vscode-focusBorder)}
+.input-box textarea{flex:1;background:none;border:none;outline:none;resize:none;color:var(--vscode-input-foreground);font-family:inherit;font-size:13px;line-height:1.5;max-height:160px;min-height:22px;padding:2px 2px}
+.send-btn{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:7px;padding:5px 10px;cursor:pointer;font-size:15px;flex-shrink:0;height:30px;line-height:1}
+.send-btn:hover{background:var(--vscode-button-hoverBackground)}
+.send-btn:disabled{opacity:.35;cursor:not-allowed}
+.stop-btn{background:#ef4444;color:#fff;border:none;border-radius:7px;padding:5px 11px;cursor:pointer;font-size:11px;font-weight:700;flex-shrink:0;height:30px;display:none;white-space:nowrap}
+.stop-btn:hover{background:#dc2626}
+.stop-btn:disabled{opacity:.5}
+.char-ct{font-size:9px;color:var(--vscode-descriptionForeground);text-align:right;padding:1px 3px 0}
+/* ── Typography ── */
+p{margin:3px 0}h1,h2,h3{margin:7px 0 3px}ul,ol{padding-left:16px}li{margin:2px 0}
+code{background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;font-size:11px}
+strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foreground)}
 </style>
 </head>
 <body>
-<div class="header">
-  <div class="status-dot" id="statusDot" title="Connection status"></div>
-  <button type="button" class="provider-badge" id="providerBadge" title="Change provider">ClawPilot</button>
-  <button type="button" class="btn-icon" id="setupBtn" title="Setup">&#9881;</button>
-  <button type="button" class="btn-icon" id="newSessionBtn" title="New session">+</button>
+<!-- Top bar -->
+<div class="topbar">
+  <span class="status-dot" id="statusDot"></span>
+  <button class="provider-btn" id="providerBadge" title="Change provider">ClawPilot</button>
+  <button class="icon-btn" id="setupBtn" title="Settings">&#9881;</button>
+  <button class="icon-btn" id="newSessionBtn" title="New chat">&#43;</button>
 </div>
-<div id="session-name" style="font-size:10px;color:var(--vscode-descriptionForeground);padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Current session"></div>
-<div class="model-bar">
-  <label class="model-bar-label" for="modelSelect">Model</label>
-  <select id="modelSelect" title="Select model (requires Ollama or API)"></select>
-  <span class="mode-badge agent" id="modeBadge" title="Click to toggle: Agent = multi-step actions; Ask = single reply">Agent</span>
+<div id="session-name" class="session-name"></div>
+<!-- Model + Mode toolbar -->
+<div class="toolbar">
+  <select id="modelSelect" class="model-select" title="Select model"></select>
+  <div class="mode-group">
+    <button class="mode-btn active-agent" id="modeAgentBtn" title="Agent: multi-step, uses tools">&#9889; Agent</button>
+    <button class="mode-btn" id="modeAskBtn" title="Ask: single reply, no tools">&#128172; Ask</button>
+  </div>
 </div>
-<div class="index-bar" id="indexBar">
-  <span class="index-status" id="indexStatus"></span>
-  <button type="button" class="btn-icon index-refresh" id="reindexBtn" title="Re-index workspace">Re-index</button>
+<!-- Status bar -->
+<div class="status-bar">
+  <span class="index-info" id="indexStatus"></span>
+  <button class="text-btn" id="reindexBtn">&#8635; Re-index</button>
+  <span style="opacity:.4">&#183;</span>
+  <button class="text-btn" id="memoryBtn">&#129504; Memory</button>
 </div>
-<div class="memory-bar" id="memoryBar">
-  <span class="memory-summary" id="memorySummary">Memory: —</span>
-  <button type="button" class="btn-icon index-refresh" id="memoryBtn" title="View / Edit Memory">&#9881; Memory</button>
-</div>
+<!-- Memory panel (hidden by default) -->
 <div class="memory-panel" id="memoryPanel">
-  <label>Project context (max 500)</label>
-  <textarea id="memProjectContext" maxlength="500" placeholder="What is this project? Tech stack, architecture..."></textarea>
-  <label>User preferences (max 300)</label>
+  <label>Project context <span style="font-weight:400;opacity:.6">(max 500)</span></label>
+  <textarea id="memProjectContext" maxlength="500" placeholder="Project description, tech stack..."></textarea>
+  <label>User preferences <span style="font-weight:400;opacity:.6">(max 300)</span></label>
   <textarea id="memUserPreferences" maxlength="300" placeholder="Coding style, preferences..."></textarea>
   <label>Key facts</label>
   <div class="key-facts-list" id="keyFactsList"></div>
-  <input type="text" id="newKeyFact" placeholder="Add fact (max 100 chars)" maxlength="100" style="width:100%;margin-top:4px;padding:4px;font-size:11px;">
+  <input type="text" id="newKeyFact" placeholder="Add a fact &#8594; Enter to save" maxlength="100"
+    style="width:100%;margin-top:5px;padding:4px 6px;font-size:11px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:4px;outline:none">
   <label>Skills</label>
   <div class="skills-list" id="skillsList"></div>
-  <button type="button" class="mem-save-btn btn-approve" id="memorySaveBtn">Save</button>
+  <button type="button" class="mem-save-btn btn-approve" id="memorySaveBtn">Save Memory</button>
 </div>
-<div class="sel-badge" id="selBadge"><span>📎</span><span id="selLabel">Selection</span></div>
+<!-- Messages -->
 <div class="messages" id="messages">
-  <div class="empty-state-setup" id="emptyStateNoSetup">
-    <div class="empty-title">No local model running</div>
-    <div class="empty-sub">Click Setup to install Ollama and a model, or choose another provider.</div>
-    <button type="button" class="quick-btn" id="setupEmptyBtn">Setup</button>
+  <div class="empty-setup" id="emptyStateNoSetup">
+    <div class="empty-icon">&#128268;</div>
+    <div class="empty-setup-title">No model connected</div>
+    <div class="empty-setup-sub">Start Ollama, or add an API key for a cloud provider.</div>
+    <button type="button" class="quick-btn" id="setupEmptyBtn">&#9881; Open Setup</button>
   </div>
   <div class="empty-state" id="emptyState">
-    <div class="empty-icon">🤖</div>
+    <div class="empty-icon">&#129302;</div>
     <div class="empty-title">ClawPilot</div>
-    <div class="empty-sub">Local AI · No cloud · No API keys<br>Type <strong>/</strong> for commands, <strong>@</strong> to attach files</div>
+    <div class="empty-sub">Local AI &#183; Privacy-first &#183; No cloud required<br>Type <strong>/</strong> for commands &#183; <strong>@</strong> to attach files</div>
     <div class="quick-actions">
       <button type="button" class="quick-btn" data-cmd="/explain">Explain</button>
       <button type="button" class="quick-btn" data-cmd="/fix">Fix bugs</button>
@@ -1032,28 +998,63 @@ strong { font-weight: 700; } em { font-style: italic; }
     </div>
   </div>
 </div>
-<div style="position:relative">
-  <div class="slash-popup" id="slashPopup"></div>
-  <div class="file-popup" id="filePopup"></div>
+<!-- Popups (above input) -->
+<div class="input-wrap">
+  <div class="popup" id="slashPop"></div>
+  <div class="popup" id="filePop"></div>
+  <div class="popup" id="cmdMenu"></div>
+  <div class="mention-pop" id="mentionPop"></div>
 </div>
-<div class="hint">Enter to send · Shift+Enter new line · / commands · @ files</div>
-<div class="input-area" style="position:relative">
-  <div id="slash-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;z-index:100;max-height:220px;overflow-y:auto;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
-  <div id="mention-menu" class="mention-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;z-index:100;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
-  <div class="input-row">
-    <textarea id="input" placeholder="Type a message... / for commands, @ for files" rows="1"></textarea>
-    <button type="button" id="stopBtn" title="Stop" style="display:none;background:#f87171;color:#000;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;flex-shrink:0;">&#9632; Stop</button>
-    <button type="button" class="send-btn" id="sendBtn" title="Send message (Enter)">Send</button>
+<!-- Context usage bar -->
+<div class="ctx-bar">
+  <div class="ctx-track"><div class="ctx-fill" id="ctxFill"></div></div>
+  <span class="ctx-label" id="ctxLabel">0 tokens</span>
+  <span class="sel-pill" id="selBadge">&#128206; <span id="selLabel">selection</span></span>
+</div>
+<!-- Input -->
+<div class="input-area">
+  <div class="input-box">
+    <textarea id="msgInput" placeholder="Ask anything...  / commands  @ files" rows="1"></textarea>
+    <button class="stop-btn" id="stopBtn" title="Stop generation">&#9632; Stop</button>
+    <button class="send-btn" id="sendBtn" title="Send (Enter)">&#9658;</button>
   </div>
-  <div id="char-counter" style="font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;padding:0 4px 2px;">0</div>
+  <div class="char-ct" id="charCt">0</div>
 </div>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-let agentMode = true, isRunning = false, selText = '', selLang = '';
-let currentBubble = null, currentStepsEl = null, attachedFiles = [];
-let slashIdx = -1, fileIdx = -1;
+let agentMode=true, running=false, selText='', selLang='';
+let curBubble=null, curSteps=null, attachedFiles=[];
+let slashIdx=-1, fileIdx=-1;
+let convTokens=0, ctxLimit=32768;
+let needSetup=true, allCmds=[];
 
-const SLASH = [
+/* ── Context limit estimates ── */
+const MODEL_CTX={
+  'llama3.3':131072,'llama3.2':131072,'llama3.1':131072,'llama3':8192,
+  'phi4':16384,'phi3.5':131072,'phi3':131072,
+  'mistral':32768,'mixtral':32768,
+  'codellama':16384,'deepseek':65536,
+  'qwen2.5':131072,'qwen2':32768,'qwen':32768,
+  'gemma3':131072,'gemma2':8192,'gemma':8192,
+  'llava':8192,'starcoder2':16384,'starcoder':8192,
+  'wizardcoder':16384,'solar':4096,'vicuna':4096,
+};
+function getCtxLimit(m){
+  if(!m)return 32768;
+  const b=m.split(':')[0].toLowerCase();
+  for(const[k,v]of Object.entries(MODEL_CTX))if(b.includes(k))return v;
+  return 32768;
+}
+function countTok(t){return Math.ceil((t||'').length/3.5);}
+function fmtTok(n){return n>=1000?(n/1000).toFixed(1)+'k':String(n);}
+function updateCtx(){
+  const pct=Math.min(100,(convTokens/ctxLimit)*100);
+  const f=document.getElementById('ctxFill'),l=document.getElementById('ctxLabel');
+  if(f)f.style.cssText='width:'+pct+'%;background:'+(pct<60?'#4ade80':pct<85?'#fbbf24':'#f87171');
+  if(l)l.textContent=fmtTok(convTokens)+' / '+fmtTok(ctxLimit)+' tokens';
+}
+
+const SLASH=[
   {cmd:'/explain',desc:'Explain selected code'},
   {cmd:'/fix',desc:'Find and fix bugs'},
   {cmd:'/refactor',desc:'Refactor for quality'},
@@ -1067,90 +1068,102 @@ const SLASH = [
   {cmd:'/run',desc:'Run terminal command (agent)'},
   {cmd:'/types',desc:'Add TypeScript types'},
 ];
+const MENTIONT=[{type:'file',label:'file'},{type:'git',label:'git'},{type:'symbol',label:'symbol'},{type:'memory',label:'memory'},{type:'workspace',label:'workspace'}];
 
 const $=id=>document.getElementById(id);
-const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('stopBtn');
-const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
-const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
-const emptyState=$('emptyState'), emptyStateNoSetup=$('emptyStateNoSetup'), sessionNameEl=$('session-name');
-const charCounter=$('char-counter'), slashMenu=$('slash-menu'), mentionMenu=$('mention-menu');
-const MENTION_TYPES = [{ type:'file', label:'file' }, { type:'git', label:'git' }, { type:'symbol', label:'symbol' }, { type:'memory', label:'memory' }, { type:'workspace', label:'workspace' }];
-let allCommands = [], needSetup = true;
+const msgs=$('messages'), inp=$('msgInput'), sendBtn=$('sendBtn'), stopBtn=$('stopBtn');
+const statusDot=$('statusDot'), modelSel=$('modelSelect');
+const selBadge=$('selBadge'), slashPop=$('slashPop'), filePop=$('filePop');
+const emptyState=$('emptyState'), emptyNoSetup=$('emptyStateNoSetup'), sessionNameEl=$('session-name');
+const charCt=$('charCt'), cmdMenu=$('cmdMenu'), mentionPop=$('mentionPop');
 
+/* init */
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
 vscode.postMessage({type:'getIndexStatus'});
 vscode.postMessage({type:'getMemory'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
-modeBadge.onclick=()=>{
-  agentMode=!agentMode;
-  modeBadge.textContent=agentMode?'Agent':'Ask';
-  modeBadge.title=agentMode?'Agent mode: multi-step tools (edit, run, plan). Click to switch to Ask.':'Ask mode: single reply. Click to switch to Agent.';
-  modeBadge.classList.toggle('agent',agentMode);
-};
+/* ── Mode toggle ── */
+const modeA=$('modeAgentBtn'), modeQ=$('modeAskBtn');
+function setMode(a){
+  agentMode=a;
+  modeA.className='mode-btn'+(a?' active-agent':'');
+  modeQ.className='mode-btn'+(!a?' active-ask':'');
+}
+modeA.onclick=()=>setMode(true);
+modeQ.onclick=()=>setMode(false);
+
+/* ── Top bar buttons ── */
 $('providerBadge').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.selectProvider'});
 $('setupBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.setup'});
 $('newSessionBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.newSession'});
-if($('setupEmptyBtn')) $('setupEmptyBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.setup'});
+if($('setupEmptyBtn'))$('setupEmptyBtn').onclick=()=>vscode.postMessage({type:'runCommand',command:'clawpilot.setup'});
 $('reindexBtn').onclick=()=>vscode.postMessage({type:'reindexWorkspace'});
-$('memoryBtn').onclick=()=>{ const p=$('memoryPanel'); p.classList.toggle('open',!p.classList.contains('open')); };
+$('memoryBtn').onclick=()=>{const p=$('memoryPanel');p.classList.toggle('open',!p.classList.contains('open'));};
 $('memorySaveBtn').onclick=()=>{
-  const core={ projectContext: $('memProjectContext').value, userPreferences: $('memUserPreferences').value, keyFacts: window._keyFacts||[] };
+  const core={projectContext:$('memProjectContext').value,userPreferences:$('memUserPreferences').value,keyFacts:window._kf||[]};
   vscode.postMessage({type:'updateCore',patch:core});
 };
-$('newKeyFact').onkeydown=(e)=>{ if(e.key==='Enter'){ const v=$('newKeyFact').value.trim(); if(v){ (window._keyFacts=window._keyFacts||[]).push(v); $('newKeyFact').value=''; renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); } } };
-function renderKeyFacts(){ const el=$('keyFactsList'); if(!el)return; const facts=window._keyFacts||[]; el.innerHTML=facts.map((f,i)=>'<span class="key-fact-tag">'+esc(f)+' <button data-i="'+i+'" title="Remove">×</button></span>').join(''); el.querySelectorAll('button').forEach(btn=>{ btn.onclick=()=>{ const i=parseInt(btn.dataset.i,10); window._keyFacts=window._keyFacts||[]; window._keyFacts.splice(i,1); renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); }; }); }
-modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.value});
-stopBtn.onclick=()=>{vscode.postMessage({type:'stopAgent'});stopBtn.disabled=true;stopBtn.textContent='Stopping…';};
+$('newKeyFact').onkeydown=e=>{
+  if(e.key==='Enter'){const v=$('newKeyFact').value.trim();if(v){(window._kf=window._kf||[]).push(v);$('newKeyFact').value='';renderKF();vscode.postMessage({type:'updateCore',patch:{keyFacts:window._kf}});}}
+};
+function renderKF(){
+  const el=$('keyFactsList');if(!el)return;
+  const f=window._kf||[];
+  el.innerHTML=f.map((t,i)=>'<span class="key-fact-tag">'+esc(t)+' <button data-i="'+i+'">\xd7</button></span>').join('');
+  el.querySelectorAll('button').forEach(b=>{b.onclick=()=>{(window._kf=window._kf||[]).splice(+b.dataset.i,1);renderKF();vscode.postMessage({type:'updateCore',patch:{keyFacts:window._kf}});};});
+}
+
+modelSel.onchange=()=>{ctxLimit=getCtxLimit(modelSel.value);updateCtx();vscode.postMessage({type:'changeModel',model:modelSel.value});};
+stopBtn.onclick=()=>{vscode.postMessage({type:'stopAgent'});stopBtn.disabled=true;stopBtn.textContent='Stopping\u2026';};
 
 document.querySelectorAll('.quick-btn').forEach(b=>{
   b.onclick=()=>{
     const cmd=(b.dataset.cmd||'').trim();
-    if(!cmd){ input.focus(); return; }
-    input.value=cmd;
-    autoSz();
-    hideSlash();
-    hideFile();
-    if(input.value.trim()&&!isRunning) send();
-    else input.focus();
+    if(!cmd){inp.focus();return;}
+    inp.value=cmd;autoSz();closeSlash();closeFile();
+    if(inp.value.trim()&&!running)send();else inp.focus();
   };
 });
 
-input.addEventListener('input',()=>{
-  const v=input.value, c=input.selectionStart;
-  if(charCounter) charCounter.textContent = v.length.toString();
-  if(v.startsWith('/')&&!v.includes(' ')&&allCommands.length){
-    const filtered=allCommands.filter(cmd=>cmd.name.startsWith(v.slice(1).toLowerCase()));
-    if(filtered.length&&slashMenu){
-      slashMenu.innerHTML=filtered.map((cmd,i)=>'<div class="slash-item" data-idx="'+i+'" data-usage="'+esc(cmd.usage)+'" style="padding:6px 12px;cursor:pointer;display:flex;gap:8px;align-items:baseline;"><span style="color:#a78bfa;font-weight:600;font-size:12px">'+esc('/'+cmd.name)+'</span><span style="color:var(--vscode-descriptionForeground);font-size:11px">'+esc(cmd.description)+'</span></div>').join('');
-      slashMenu.style.display='block';
-      slashMenu.querySelectorAll('.slash-item').forEach(el=>{
-        el.addEventListener('mousedown',(e)=>{ e.preventDefault(); const usage=el.getAttribute('data-usage')||''; input.value=usage.replace(/<[^>]*>/g,' ').trim()+(usage.includes('<')?' ':''); slashMenu.style.display='none'; input.focus(); if(charCounter) charCounter.textContent=input.value.length.toString(); });
+/* ── Input events ── */
+inp.addEventListener('input',()=>{
+  const v=inp.value,c=inp.selectionStart;
+  if(charCt)charCt.textContent=v.length;
+  /* New command menu from loaded commands */
+  if(v.startsWith('/')&&!v.includes(' ')&&allCmds.length){
+    const fil=allCmds.filter(x=>x.name.startsWith(v.slice(1).toLowerCase()));
+    if(fil.length&&cmdMenu){
+      cmdMenu.innerHTML=fil.map((x,i)=>'<div class="popup-item" data-usage="'+esc(x.usage)+'"><span class="p-cmd">'+esc('/'+x.name)+'</span><span class="p-desc">'+esc(x.description)+'</span></div>').join('');
+      cmdMenu.classList.add('open');
+      cmdMenu.querySelectorAll('.popup-item').forEach(el=>{
+        el.addEventListener('mousedown',e=>{e.preventDefault();const u=el.getAttribute('data-usage')||'';inp.value=u.replace(/<[^>]*>/g,' ').trim()+(u.includes('<')?' ':'');cmdMenu.classList.remove('open');inp.focus();if(charCt)charCt.textContent=inp.value.length;});
       });
-    } else if(slashMenu) slashMenu.style.display='none';
-  } else if(slashMenu) slashMenu.style.display='none';
+    }else if(cmdMenu)cmdMenu.classList.remove('open');
+  }else if(cmdMenu)cmdMenu.classList.remove('open');
   autoSz();
-  const sm=v.match(/^\\/(\\w*)$/);
-  if(sm&&!allCommands.length){ const p=sm[1].toLowerCase(); const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p)); if(f.length){renderSlash(f);return;} }
-  hideSlash();
-  const am=v.slice(0,c).match(/@(\\w*)$/);
+  /* Fallback SLASH list */
+  const sm=v.match(/^\/(\w*)$/);
+  if(sm&&!allCmds.length){const p=sm[1].toLowerCase();const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p));if(f.length){renderSlash(f);return;}}
+  closeSlash();
+  /* @ mentions */
+  const am=v.slice(0,c).match(/@(\w*)$/);
   if(am){
-    const segment=v.slice(0,c).slice(v.slice(0,c).lastIndexOf('@'));
-    if(segment.indexOf(':')===-1){
-      if(mentionMenu){
-        mentionMenu.innerHTML=MENTION_TYPES.map(m=>'<button type="button" class="mention-pill" data-type="'+esc(m.type)+'" data-label="'+esc(m.label)+'">@'+esc(m.label)+'</button>').join('');
-        mentionMenu.style.display='block';
-        mentionMenu.querySelectorAll('.mention-pill').forEach(btn=>{
-          btn.addEventListener('mousedown',function(e){ e.preventDefault();
-            const typ=this.dataset.type, val=input.value, pos=input.selectionStart;
-            const start=val.slice(0,pos).lastIndexOf('@');
-            const before=val.slice(0,start), after=val.slice(pos);
-            const insert=typ==='workspace'?'@workspace ':'@'+typ+':';
-            input.value=before+insert+after;
-            input.selectionStart=input.selectionEnd=before.length+insert.length;
-            mentionMenu.style.display='none'; input.focus(); autoSz();
-            if(charCounter) charCounter.textContent=input.value.length.toString();
+    const seg=v.slice(0,c).slice(v.slice(0,c).lastIndexOf('@'));
+    if(seg.indexOf(':')===-1){
+      if(mentionPop){
+        mentionPop.innerHTML=MENTIONT.map(m=>'<button class="m-pill" data-type="'+esc(m.type)+'">@'+esc(m.label)+'</button>').join('');
+        mentionPop.classList.add('open');
+        mentionPop.querySelectorAll('.m-pill').forEach(b=>{
+          b.addEventListener('mousedown',function(e){e.preventDefault();
+            const tp=this.dataset.type,val=inp.value,pos=inp.selectionStart;
+            const st=val.slice(0,pos).lastIndexOf('@');
+            const bef=val.slice(0,st),aft=val.slice(pos);
+            const ins=tp==='workspace'?'@workspace ':'@'+tp+':';
+            inp.value=bef+ins+aft;inp.selectionStart=inp.selectionEnd=bef.length+ins.length;
+            mentionPop.classList.remove('open');inp.focus();autoSz();
+            if(charCt)charCt.textContent=inp.value.length;
           });
         });
       }
@@ -1159,329 +1172,334 @@ input.addEventListener('input',()=>{
     vscode.postMessage({type:'getWorkspaceFiles',query:am[1]});
     return;
   }
-  if(mentionMenu) mentionMenu.style.display='none';
-  hideFile();
+  if(mentionPop)mentionPop.classList.remove('open');
+  closeFile();
 });
-input.addEventListener('blur',()=>setTimeout(()=>{ if(slashMenu) slashMenu.style.display='none'; if(mentionMenu) mentionMenu.style.display='none'; },150));
 
-input.addEventListener('keydown',e=>{
-  const isEnter=(e.key==='Enter'||e.keyCode===13)&&!e.shiftKey;
-  if(slashPopup.classList.contains('visible')){
-    const its=slashPopup.querySelectorAll('.slash-item');
+inp.addEventListener('blur',()=>setTimeout(()=>{
+  closeSlash();closeFile();
+  if(mentionPop)mentionPop.classList.remove('open');
+  if(cmdMenu)cmdMenu.classList.remove('open');
+},150));
+
+inp.addEventListener('keydown',e=>{
+  const enter=(e.key==='Enter'||e.keyCode===13)&&!e.shiftKey;
+  if(slashPop.classList.contains('open')){
+    const its=slashPop.querySelectorAll('.popup-item');
     if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();slashIdx=Math.min(slashIdx+1,its.length-1);hlSlash();return;}
     if(e.key==='ArrowUp'){e.preventDefault();e.stopPropagation();slashIdx=Math.max(slashIdx-1,0);hlSlash();return;}
-    if(isEnter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,slashIdx)]||its[0])?.click();return;}
-    if(e.key==='Escape'){e.preventDefault();hideSlash();return;}
+    if(enter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,slashIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){e.preventDefault();closeSlash();return;}
   }
-  if(filePopup.classList.contains('visible')){
-    const its=filePopup.querySelectorAll('.file-item');
+  if(filePop.classList.contains('open')){
+    const its=filePop.querySelectorAll('.file-item');
     if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();fileIdx=Math.min(fileIdx+1,its.length-1);hlFile();return;}
     if(e.key==='ArrowUp'){e.preventDefault();e.stopPropagation();fileIdx=Math.max(fileIdx-1,0);hlFile();return;}
-    if(isEnter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,fileIdx)]||its[0])?.click();return;}
-    if(e.key==='Escape'){e.preventDefault();hideFile();return;}
+    if(enter||e.key==='Tab'){e.preventDefault();e.stopPropagation();(its[Math.max(0,fileIdx)]||its[0])?.click();return;}
+    if(e.key==='Escape'){e.preventDefault();closeFile();return;}
   }
-  if(isEnter){e.preventDefault();e.stopPropagation();send();}
+  if(enter){e.preventDefault();e.stopPropagation();send();}
 },{capture:true});
 
-function autoSz(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px';}
+function autoSz(){inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,160)+'px';}
 
-function showSlash(partial){
-  const p=(partial||'/').replace(/^\//,'').toLowerCase();
-  renderSlash(SLASH.filter(s=>s.cmd.slice(1).startsWith(p)));
-}
 function renderSlash(items){
-  if(!items.length){hideSlash();return;}
-  slashPopup.innerHTML=items.map((it,i)=>
-    '<div class="slash-item" data-cmd="'+it.cmd+'">' +
-    '<span class="slash-cmd">'+it.cmd+'</span>' +
-    '<span class="slash-desc">'+it.desc+'</span></div>'
-  ).join('');
-  slashPopup.querySelectorAll('.slash-item').forEach(el=>{
-    el.onclick=()=>{input.value=el.dataset.cmd+' ';hideSlash();input.focus();autoSz();};
-  });
-  slashIdx=0; hlSlash(); slashPopup.classList.add('visible');
+  if(!items.length){closeSlash();return;}
+  slashPop.innerHTML=items.map(it=>'<div class="popup-item" data-cmd="'+it.cmd+'"><span class="p-cmd">'+it.cmd+'</span><span class="p-desc">'+it.desc+'</span></div>').join('');
+  slashPop.querySelectorAll('.popup-item').forEach(el=>{el.onclick=()=>{inp.value=el.dataset.cmd+' ';closeSlash();inp.focus();autoSz();};});
+  slashIdx=0;hlSlash();slashPop.classList.add('open');
 }
-function hideSlash(){slashPopup.classList.remove('visible');slashIdx=-1;}
-function hlSlash(){slashPopup.querySelectorAll('.slash-item').forEach((el,i)=>{el.classList.toggle('sel',i===slashIdx);if(i===slashIdx)el.scrollIntoView({block:'nearest'});});}
+function closeSlash(){slashPop.classList.remove('open');slashIdx=-1;}
+function hlSlash(){slashPop.querySelectorAll('.popup-item').forEach((el,i)=>{el.classList.toggle('hi',i===slashIdx);if(i===slashIdx)el.scrollIntoView({block:'nearest'});});}
 
 function renderFile(files){
-  if(!files.length){hideFile();return;}
-  filePopup.innerHTML=files.slice(0,20).map(f=>'<div class="file-item" data-f="'+esc(f)+'">'+esc(f)+'</div>').join('');
-  filePopup.querySelectorAll('.file-item').forEach(el=>{
+  if(!files.length){closeFile();return;}
+  filePop.innerHTML=files.slice(0,20).map(f=>'<div class="file-item" data-f="'+esc(f)+'">'+esc(f)+'</div>').join('');
+  filePop.querySelectorAll('.file-item').forEach(el=>{
     el.onclick=()=>{
-      const v=input.value,c=input.selectionStart;
-      const b=v.slice(0,c).replace(/@([^\\s]*)$/,'@'+el.dataset.f+' ');
-      input.value=b+v.slice(c);
+      const v=inp.value,c=inp.selectionStart;
+      inp.value=v.slice(0,c).replace(/@([^\s]*)$/,'@'+el.dataset.f+' ')+v.slice(c);
       if(!attachedFiles.includes(el.dataset.f))attachedFiles.push(el.dataset.f);
-      hideFile();input.focus();autoSz();
+      closeFile();inp.focus();autoSz();
     };
   });
-  fileIdx=0; hlFile(); filePopup.classList.add('visible');
+  fileIdx=0;hlFile();filePop.classList.add('open');
 }
-function hideFile(){filePopup.classList.remove('visible');fileIdx=-1;}
-function hlFile(){filePopup.querySelectorAll('.file-item').forEach((el,i)=>el.classList.toggle('sel',i===fileIdx));}
+function closeFile(){filePop.classList.remove('open');fileIdx=-1;}
+function hlFile(){filePop.querySelectorAll('.file-item').forEach((el,i)=>el.classList.toggle('hi',i===fileIdx));}
 
 function send(){
-  const text=input.value.trim();
-  if(!text||isRunning)return;
-  const code=selText||'', files=[...attachedFiles];
-  attachedFiles=[]; input.value=''; autoSz();
-  hideSlash(); hideFile();
+  const text=inp.value.trim();
+  if(!text||running)return;
+  const code=selText||'',files=[...attachedFiles];
+  attachedFiles=[];inp.value='';autoSz();
+  closeSlash();closeFile();
+  convTokens+=countTok(text);updateCtx();
   vscode.postMessage({type:'sendMessage',text,codeContext:code,files,agentMode});
 }
 sendBtn.onclick=send;
 
 function setRunning(r){
-  isRunning=r; sendBtn.disabled=r;
-  stopBtn.classList.toggle('visible',r);
+  running=r;
+  sendBtn.disabled=r;
+  sendBtn.style.display=r?'none':'inline-block';
+  stopBtn.style.display=r?'inline-block':'none';
+  if(!r){stopBtn.disabled=false;stopBtn.textContent='\u25a0 Stop';}
 }
-function agentEnd(){
-  setRunning(false);
-  stopBtn.style.display='none'; sendBtn.style.display='inline-block';
-  stopBtn.disabled=false; stopBtn.textContent='\u25A0 Stop';
-}
+function agentEnd(){setRunning(false);}
 
-function hideEmpty(){emptyState.style.display='none';if(emptyStateNoSetup) emptyStateNoSetup.classList.remove('visible');}
+function hideEmpty(){
+  emptyState.style.display='none';
+  if(emptyNoSetup)emptyNoSetup.classList.remove('visible');
+}
 function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
-function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-var CONTEXT_SYMBOLS = { selection:'[sel]', activeFile:'[file]', workspaceRag:'[rag]', gitDiff:'[diff]', diagnostics:'[diag]', memory:'[mem]', skills:'[skill]', files:'[files]' };
-function addUser(text, contextTypes){
+const CTX_SYM={selection:'[sel]',activeFile:'[file]',workspaceRag:'[rag]',gitDiff:'[diff]',diagnostics:'[diag]',memory:'[mem]',skills:'[skill]',files:'[files]'};
+
+function addUser(text,ctxTypes){
   hideEmpty();
-  const d=document.createElement('div'); d.className='message user';
+  const d=document.createElement('div');d.className='message user';
   d.innerHTML='<div class="bubble">'+esc(text)+'</div>';
-  if(contextTypes&&contextTypes.length){
-    const sym=document.createElement('div'); sym.className='context-symbols';
-    sym.title='Context: '+contextTypes.join(', ');
-    sym.innerHTML=contextTypes.map(t=>'<span title="'+esc(t)+'">'+(CONTEXT_SYMBOLS[t]||'')+' '+esc(t)+'</span>').join('');
-    d.appendChild(sym);
+  if(ctxTypes&&ctxTypes.length){
+    const s=document.createElement('div');s.className='ctx-tags';
+    s.innerHTML=ctxTypes.map(t=>'<span class="ctx-tag" title="'+esc(t)+'">'+(CTX_SYM[t]||esc(t))+'</span>').join('');
+    d.appendChild(s);
   }
-  msgs.appendChild(d); scrollBot();
+  msgs.appendChild(d);scrollBot();
 }
 
 function startAssistant(){
   hideEmpty();
-  const d=document.createElement('div'); d.className='message assistant';
-  const b=document.createElement('div'); b.className='bubble';
-  b.innerHTML='<div class="thinking"><div class="thinking-dots"><span></span><span></span><span></span></div> Thinking...</div>';
-  d.appendChild(b); msgs.appendChild(d); currentBubble=b; currentStepsEl=null; scrollBot();
+  const d=document.createElement('div');d.className='message assistant';
+  const b=document.createElement('div');b.className='bubble';
+  b.innerHTML='<div class="thinking"><div class="thinking-dots"><span></span><span></span><span></span></div> Thinking\u2026</div>';
+  d.appendChild(b);msgs.appendChild(d);curBubble=b;curSteps=null;scrollBot();
 }
 
 function streamChunk(chunk){
-  if(!currentBubble)startAssistant();
-  const t=currentBubble.querySelector('.thinking'); if(t)t.remove();
-  let s=currentBubble.querySelector('.stream-raw');
-  if(!s){s=document.createElement('span');s.className='stream-raw';currentBubble.appendChild(s);}
-  s.textContent=(s.textContent||'')+chunk;
-  scrollBot();
+  if(!curBubble)startAssistant();
+  const t=curBubble.querySelector('.thinking');if(t)t.remove();
+  let s=curBubble.querySelector('.stream-raw');
+  if(!s){s=document.createElement('span');s.className='stream-raw';curBubble.appendChild(s);}
+  s.textContent=(s.textContent||'')+chunk;scrollBot();
 }
 
 function finalize(html){
-  if(!currentBubble)return;
-  currentBubble.innerHTML=html||''; attachActions(currentBubble); currentBubble=null; scrollBot();
+  if(!curBubble)return;
+  convTokens+=countTok(curBubble.querySelector('.stream-raw')?.textContent||'');updateCtx();
+  curBubble.innerHTML=html||'';attachActions(curBubble);curBubble=null;scrollBot();
 }
 
 function attachActions(el){
   el.querySelectorAll('.code-block').forEach(block=>{
-    const pre=block.querySelector('pre'); if(!pre)return;
-    const cp=block.querySelector('.copy-btn'), ins=block.querySelector('.insert-btn');
+    const pre=block.querySelector('pre');if(!pre)return;
+    const cp=block.querySelector('.copy-btn'),ins=block.querySelector('.insert-btn');
     if(cp)cp.onclick=()=>{navigator.clipboard?.writeText(pre.textContent||'');cp.textContent='Copied!';setTimeout(()=>cp.textContent='Copy',1200);};
     if(ins)ins.onclick=()=>vscode.postMessage({type:'insertCode',code:pre.textContent||''});
   });
 }
 
 function agentStart(){
-  setRunning(true); hideEmpty();
-  stopBtn.style.display='inline-block'; sendBtn.style.display='none';
-  const d=document.createElement('div'); d.className='message assistant';
-  const b=document.createElement('div'); b.className='bubble';
-  d.appendChild(b); msgs.appendChild(d); currentBubble=b;
-  const steps=document.createElement('div'); steps.className='agent-steps';
-  b.appendChild(steps); currentStepsEl=steps; scrollBot();
+  setRunning(true);hideEmpty();
+  const d=document.createElement('div');d.className='message assistant';
+  const b=document.createElement('div');b.className='bubble';
+  d.appendChild(b);msgs.appendChild(d);curBubble=b;
+  const steps=document.createElement('div');steps.className='agent-steps';
+  b.appendChild(steps);curSteps=steps;scrollBot();
 }
 
 function addToolCall(name,args,step){
-  if(!currentStepsEl){agentStart();}
-  const s=document.createElement('div'); s.className='agent-step'; s.id='step'+step;
-  const argsStr=args?Object.entries(args).map(([k,v])=>k+': '+String(v).slice(0,60)).join(' · '):'';
-  s.innerHTML='<span class="step-icon">⚙</span><div class="step-body"><div class="step-title">'+esc(name)+'</div>'+(argsStr?'<div class="step-detail">'+esc(argsStr)+'</div>':'')+'</div>';
-  const det=s.querySelector('.step-detail');
-  if(det)det.onclick=()=>det.classList.toggle('expanded');
-  currentStepsEl.appendChild(s); scrollBot();
+  if(!curSteps)agentStart();
+  const s=document.createElement('div');s.className='agent-step';s.id='step'+step;
+  const argsStr=args?Object.entries(args).map(([k,v])=>k+': '+String(v).slice(0,60)).join(' \xb7 '):'';
+  s.innerHTML='<span class="step-icon">\u2699</span><div class="step-body"><div class="step-title">'+esc(name)+'</div>'+(argsStr?'<div class="step-detail">'+esc(argsStr)+'</div>':'')+'</div>';
+  const det=s.querySelector('.step-detail');if(det)det.onclick=()=>det.classList.toggle('expanded');
+  curSteps.appendChild(s);scrollBot();
 }
 
 function addToolResult(name,output,ok,step){
-  const s=document.getElementById('step'+step); if(!s)return;
+  const s=document.getElementById('step'+step);if(!s)return;
   s.classList.add(ok?'success':'failure');
-  s.querySelector('.step-icon').textContent=ok?'✓':'✗';
-  const d=document.createElement('div'); d.className='step-detail';
-  d.textContent=(output||'').slice(0,400); d.onclick=()=>d.classList.toggle('expanded');
-  s.querySelector('.step-body').appendChild(d); scrollBot();
+  s.querySelector('.step-icon').textContent=ok?'\u2713':'\u2717';
+  const d=document.createElement('div');d.className='step-detail';
+  d.textContent=(output||'').slice(0,400);d.onclick=()=>d.classList.toggle('expanded');
+  s.querySelector('.step-body').appendChild(d);scrollBot();
 }
 
 function addReflection(content,attempt){
-  if(!currentStepsEl){agentStart();}
-  const s=document.createElement('div'); s.className='agent-step reflection';
-  s.innerHTML='<span class="step-icon">🔄</span><div class="step-body"><div class="step-title">Reflecting (attempt '+esc(String(attempt||1))+')</div><div class="step-detail">'+esc(content||'')+'</div></div>';
-  const det=s.querySelector('.step-detail');
-  if(det)det.onclick=()=>det.classList.toggle('expanded');
-  currentStepsEl.appendChild(s); scrollBot();
+  if(!curSteps)agentStart();
+  const s=document.createElement('div');s.className='agent-step reflection';
+  s.innerHTML='<span class="step-icon">\ud83d\udd04</span><div class="step-body"><div class="step-title">Reflecting (attempt '+esc(String(attempt||1))+')</div><div class="step-detail">'+esc(content||'')+'</div></div>';
+  const det=s.querySelector('.step-detail');if(det)det.onclick=()=>det.classList.toggle('expanded');
+  curSteps.appendChild(s);scrollBot();
 }
 
 function showDiffPreview(stepId,filePath,isNew,html){
-  if(!currentStepsEl){agentStart();}
-  const wrap=document.createElement('div'); wrap.className='diff-block';
-  wrap.innerHTML='<div class="diff-header"><span>'+(isNew?'✚ New file: ':'~ Edit: ')+esc(filePath)+'</span></div><div class="diff-body">'+html+'</div><div class="diff-actions"><button class="btn-approve-diff">✓ Apply</button><button class="btn-reject-diff">✕ Reject</button></div>';
-  wrap.querySelector('.btn-approve-diff').onclick=()=>{
-    wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#4ade80">Applied.</em>';
-    vscode.postMessage({type:'approveDiff',stepId});
-  };
-  wrap.querySelector('.btn-reject-diff').onclick=()=>{
-    wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#f87171">Rejected.</em>';
-    vscode.postMessage({type:'rejectDiff',stepId});
-  };
-  currentStepsEl.appendChild(wrap); scrollBot();
+  if(!curSteps)agentStart();
+  const wrap=document.createElement('div');wrap.className='diff-block';
+  wrap.innerHTML='<div class="diff-header"><span>'+(isNew?'\u271a New: ':'~ Edit: ')+esc(filePath)+'</span></div><div class="diff-body">'+html+'</div><div class="diff-actions"><button class="btn-approve-diff">\u2713 Apply</button><button class="btn-reject-diff">\u2715 Reject</button></div>';
+  wrap.querySelector('.btn-approve-diff').onclick=()=>{wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#4ade80">Applied.</em>';vscode.postMessage({type:'approveDiff',stepId});};
+  wrap.querySelector('.btn-reject-diff').onclick=()=>{wrap.querySelector('.diff-actions').innerHTML='<em style="font-size:11px;color:#f87171">Rejected.</em>';vscode.postMessage({type:'rejectDiff',stepId});};
+  curSteps.appendChild(wrap);scrollBot();
 }
 
 function showPlan(html){
-  setRunning(false); hideEmpty();
-  const d=document.createElement('div'); d.className='message assistant';
-  const b=document.createElement('div'); b.className='bubble'; b.style.padding='4px';
-  const plan=document.createElement('div'); plan.className='plan-block';
-  plan.innerHTML='<div class="plan-header">📋 Plan — Review before executing</div><div class="plan-content">'+html+'</div><div class="plan-actions"><button class="btn-approve" id="approveBtn">▶ Execute Plan</button><button class="btn-reject" id="rejectBtn">✕ Reject</button></div>';
-  b.appendChild(plan); d.appendChild(b); msgs.appendChild(d); currentBubble=null;
-  plan.querySelector('#approveBtn').onclick=()=>{
-    plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;opacity:0.7">Executing...</em>';
-    vscode.postMessage({type:'confirmPlan'});
-  };
-  plan.querySelector('#rejectBtn').onclick=()=>{
-    plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;color:#f44336">Plan rejected.</em>';
-    vscode.postMessage({type:'rejectPlan'});
-  };
+  setRunning(false);hideEmpty();
+  const d=document.createElement('div');d.className='message assistant';
+  const b=document.createElement('div');b.className='bubble';b.style.padding='4px';
+  const plan=document.createElement('div');plan.className='plan-block';
+  plan.innerHTML='<div class="plan-header">\ud83d\udccb Plan \u2014 Review before executing</div><div class="plan-content">'+html+'</div><div class="plan-actions"><button class="btn-approve" id="approveBtn">\u25b6 Execute</button><button class="btn-reject" id="rejectBtn">\u2715 Reject</button></div>';
+  b.appendChild(plan);d.appendChild(b);msgs.appendChild(d);curBubble=null;
+  plan.querySelector('#approveBtn').onclick=()=>{plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;opacity:.7">Executing\u2026</em>';vscode.postMessage({type:'confirmPlan'});};
+  plan.querySelector('#rejectBtn').onclick=()=>{plan.querySelector('.plan-actions').innerHTML='<em style="font-size:12px;color:#f44336">Rejected.</em>';vscode.postMessage({type:'rejectPlan'});};
   scrollBot();
 }
 
+/* ── Message handler ── */
 window.addEventListener('message',e=>{
   const m=e.data;
   switch(m.type){
-    case 'userMessage': addUser(m.text, m.contextTypes); startAssistant(); setRunning(true); break;
-    case 'startAssistantMessage': startAssistant(); setRunning(true); break;
-    case 'streamChunk': streamChunk(m.chunk); break;
-    case 'finalizeAssistantMessage': finalize(m.html); agentEnd(); break;
-    case 'agentStart': agentStart(); break;
+    case 'userMessage': addUser(m.text,m.contextTypes);startAssistant();setRunning(true);break;
+    case 'startAssistantMessage': startAssistant();setRunning(true);break;
+    case 'streamChunk': streamChunk(m.chunk);break;
+    case 'finalizeAssistantMessage': finalize(m.html);agentEnd();break;
+    case 'agentStart': agentStart();break;
     case 'agentThinking': break;
-    case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step); break;
-    case 'agentToolResult': addToolResult(m.toolName,m.output,m.success,m.step); break;
-    case 'agentReflection': addReflection(m.content,m.attempt); break;
-    case 'agentDiffPreview': showDiffPreview(m.stepId,m.path,m.isNew,m.html); break;
-    case 'agentPlan': showPlan(m.html); break;
+    case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step);break;
+    case 'agentToolResult': addToolResult(m.toolName,m.output,m.success,m.step);break;
+    case 'agentReflection': addReflection(m.content,m.attempt);break;
+    case 'agentDiffPreview': showDiffPreview(m.stepId,m.path,m.isNew,m.html);break;
+    case 'agentPlan': showPlan(m.html);break;
     case 'agentDone':
-      if(m.html&&currentBubble){
-        const r=document.createElement('div'); r.innerHTML=m.html;
-        currentBubble.appendChild(r); attachActions(r);
-      }
-      if(m.error&&currentBubble){
-        const er=document.createElement('div');
-        er.style.cssText='color:#f44336;font-size:12px;margin-top:6px;';
-        er.textContent='⚠ '+m.error; currentBubble.appendChild(er);
-      }
-      currentBubble=null; agentEnd(); scrollBot(); break;
-    case 'planExecuting': startAssistant(); setRunning(true); break;
-    case 'planRejected': agentEnd(); break;
-    case 'models': renderModels(m.models,m.current); break;
-    case 'connectionStatus': statusDot.classList.toggle('connected',m.connected); break;
+      if(m.html&&curBubble){const r=document.createElement('div');r.innerHTML=m.html;curBubble.appendChild(r);attachActions(r);convTokens+=countTok(r.textContent||'');updateCtx();}
+      if(m.error&&curBubble){const er=document.createElement('div');er.style.cssText='color:#f87171;font-size:12px;margin-top:6px;';er.textContent='\u26a0 '+m.error;curBubble.appendChild(er);}
+      curBubble=null;agentEnd();scrollBot();break;
+    case 'planExecuting': startAssistant();setRunning(true);break;
+    case 'planRejected': agentEnd();break;
+    case 'models': renderModels(m.models,m.current);break;
+    case 'connectionStatus': statusDot.classList.toggle('ok',m.connected);break;
     case 'providerModelStatus':{
-      const badge=$('providerBadge'); if(badge) badge.textContent=(m.providerLabel||'ClawPilot')+(m.model?' • '+m.model:'');
+      const badge=$('providerBadge');
+      if(badge)badge.textContent=(m.providerLabel||'ClawPilot')+(m.model?' \u2022 '+m.model:'');
       needSetup=!m.connected||!m.model;
-      if(emptyStateNoSetup) emptyStateNoSetup.classList.toggle('visible',needSetup);
-      if(emptyState) emptyState.style.display=needSetup?'none':'flex';
+      if(emptyNoSetup)emptyNoSetup.classList.toggle('visible',needSetup);
+      if(emptyState)emptyState.style.display=needSetup?'none':'flex';
+      if(m.model){ctxLimit=getCtxLimit(m.model);updateCtx();}
       break;
     }
-    case 'indexStatus':
-      const statusEl=$('indexStatus');
-      if(statusEl){
-        statusEl.textContent=m.message||'';
-        statusEl.classList.toggle('indexing',!!m.indexing);
-        if(m.fileCount!=null) statusEl.textContent='Indexing workspace... ('+m.fileCount+' files)';
-        if(!m.indexing&&m.chunkCount!=null) statusEl.textContent=m.chunkCount+' chunks indexed';
+    case 'indexStatus':{
+      const el=$('indexStatus');
+      if(el){
+        el.classList.toggle('indexing',!!m.indexing);
+        if(m.indexing&&m.fileCount!=null)el.textContent='Indexing\u2026 ('+m.fileCount+' files)';
+        else if(!m.indexing&&m.chunkCount!=null)el.textContent=m.chunkCount+' chunks indexed';
+        else el.textContent=m.message||'';
       }
       break;
-    case 'memoryData':
+    }
+    case 'memoryData':{
       const core=m.core||{};
-      $('memProjectContext').value=core.projectContext||'';
-      $('memUserPreferences').value=core.userPreferences||'';
-      window._keyFacts=Array.isArray(core.keyFacts)?core.keyFacts.slice():[];
-      renderKeyFacts();
-      const recall=m.recallCount||0, arch=m.archivalCount||0, skillList=m.skills||[];
-      const sum=[core.projectContext?core.projectContext.slice(0,40)+'…':'—', 'R:'+recall, 'A:'+arch, 'S:'+skillList.length].join(' · ');
-      const sumEl=$('memorySummary'); if(sumEl) sumEl.textContent='Memory: '+sum;
-      const skillsEl=$('skillsList'); if(skillsEl) skillsEl.innerHTML=skillList.map(s=>'<div class="skill-row"><span>'+esc(s.name)+'</span><button data-id="'+esc(s.id)+'">Delete</button></div>').join('')||'<span style="opacity:0.7">No skills</span>';
-      skillsEl.querySelectorAll('button').forEach(btn=>{ btn.onclick=()=>vscode.postMessage({type:'deleteSkill',id:btn.dataset.id}); });
+      if($('memProjectContext'))$('memProjectContext').value=core.projectContext||'';
+      if($('memUserPreferences'))$('memUserPreferences').value=core.userPreferences||'';
+      window._kf=Array.isArray(core.keyFacts)?core.keyFacts.slice():[];
+      renderKF();
+      const skillList=m.skills||[];
+      const sk=$('skillsList');
+      if(sk){sk.innerHTML=skillList.map(s=>'<div class="skill-row"><span>'+esc(s.name)+'</span><button data-id="'+esc(s.id)+'">Delete</button></div>').join('')||'<span style="opacity:.7">No skills</span>';sk.querySelectorAll('button').forEach(b=>{b.onclick=()=>vscode.postMessage({type:'deleteSkill',id:b.dataset.id});});}
       break;
+    }
     case 'selectionContext':
-      selText=m.text; selLang=m.lang;
-      selBadge.classList.toggle('visible',!!m.text);
-      if(m.text)$('selLabel').textContent=m.text.split('\\n').length+' lines ('+m.lang+')';
+      selText=m.text;selLang=m.lang;
+      selBadge.classList.toggle('on',!!m.text);
+      if(m.text&&$('selLabel'))$('selLabel').textContent=m.text.split('\n').length+' lines'+(m.lang?' ('+m.lang+')':'');
       break;
-    case 'workspaceFiles': renderFile(m.files); break;
-    case 'injectMessage': input.value=m.text; if(m.codeContext)selText=m.codeContext; autoSz(); input.focus(); break;
-    case 'injectPrompt': input.value=m.text||''; autoSz(); break;
-    case 'submitPrompt': if(input.value.trim())send(); break;
+    case 'workspaceFiles': renderFile(m.files);break;
+    case 'injectMessage': inp.value=m.text;if(m.codeContext)selText=m.codeContext;autoSz();inp.focus();break;
+    case 'injectPrompt': inp.value=m.text||'';autoSz();break;
+    case 'submitPrompt': if(inp.value.trim())send();break;
     case 'loadHistory':
-      msgs.innerHTML=''; if(emptyStateNoSetup) msgs.appendChild(emptyStateNoSetup); msgs.appendChild(emptyState); emptyState.style.display='none'; emptyStateNoSetup.classList.remove('visible');
-      if(sessionNameEl) sessionNameEl.textContent=m.sessionName||'';
-      for(const msg of (m.messages||[])){
-        if(msg.role==='user') addUser(msg.content);
-        else {
+      msgs.innerHTML='';
+      if(emptyNoSetup)msgs.appendChild(emptyNoSetup);
+      msgs.appendChild(emptyState);
+      emptyState.style.display='none';
+      if(emptyNoSetup)emptyNoSetup.classList.remove('visible');
+      if(sessionNameEl)sessionNameEl.textContent=m.sessionName||'';
+      convTokens=0;
+      for(const msg of(m.messages||[])){
+        if(msg.role==='user'){addUser(msg.content);convTokens+=countTok(msg.content);}
+        else{
           hideEmpty();
-          const d=document.createElement('div'); d.className='message assistant';
-          const b=document.createElement('div'); b.className='bubble';
-          b.innerHTML=msg.html||esc(msg.content); d.appendChild(b); msgs.appendChild(d); attachActions(b); scrollBot();
+          const d=document.createElement('div');d.className='message assistant';
+          const b=document.createElement('div');b.className='bubble';
+          b.innerHTML=msg.html||esc(msg.content);d.appendChild(b);msgs.appendChild(d);
+          attachActions(b);convTokens+=countTok(msg.content);
         }
       }
-      scrollBot();
-      break;
-    case 'clearMessages': msgs.innerHTML=''; if(emptyStateNoSetup) msgs.appendChild(emptyStateNoSetup); msgs.appendChild(emptyState); emptyState.style.display=needSetup?'none':'flex'; if(emptyStateNoSetup) emptyStateNoSetup.classList.toggle('visible',needSetup); break;
+      updateCtx();scrollBot();break;
+    case 'clearMessages':
+      msgs.innerHTML='';
+      if(emptyNoSetup)msgs.appendChild(emptyNoSetup);
+      msgs.appendChild(emptyState);
+      emptyState.style.display=needSetup?'none':'flex';
+      if(emptyNoSetup)emptyNoSetup.classList.toggle('visible',needSetup);
+      convTokens=0;updateCtx();break;
     case 'error':
-      if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
-      agentEnd(); break;
-    case 'slashCommands': allCommands=m.commands||[]; break;
-    case 'assistantMessage':
+      if(curBubble){curBubble.innerHTML='<span style="color:#f87171">\u26a0 '+esc(m.message||'Error')+'</span>';curBubble=null;}
+      else{
+        hideEmpty();
+        const d=document.createElement('div');d.className='message assistant';
+        const b=document.createElement('div');b.className='bubble';
+        b.innerHTML='<span style="color:#f87171">\u26a0 '+esc(m.message||'Error')+'</span>';
+        d.appendChild(b);msgs.appendChild(d);scrollBot();
+      }
+      agentEnd();break;
+    case 'slashCommands': allCmds=m.commands||[];break;
+    case 'assistantMessage':{
       hideEmpty();
-      const ad=document.createElement('div'); ad.className='message assistant';
-      const ab=document.createElement('div'); ab.className='bubble';
+      const ad=document.createElement('div');ad.className='message assistant';
+      const ab=document.createElement('div');ab.className='bubble';
       ab.innerHTML=m.html||esc(m.text||'');
-      ad.appendChild(ab); msgs.appendChild(ad); attachActions(ab); scrollBot();
+      ad.appendChild(ab);msgs.appendChild(ad);attachActions(ab);
+      convTokens+=countTok(m.text||'');updateCtx();scrollBot();break;
+    }
+    case 'setModel':
+      if(modelSel&&m.model){modelSel.value=m.model;ctxLimit=getCtxLimit(m.model);updateCtx();vscode.postMessage({type:'changeModel',model:m.model});}
       break;
-    case 'setModel': if(modelSel&&m.model){ modelSel.value=m.model; vscode.postMessage({type:'changeModel',model:m.model}); } break;
     case 'installStart':
       hideEmpty();
-      { const d=document.createElement('div'); d.className='message assistant'; const b=document.createElement('div'); b.className='bubble install-log'; b.innerHTML='<div style="font-family:monospace;font-size:11px;white-space:pre-wrap;">Installing '+esc(m.model)+'...<\/div>'; d.appendChild(b); msgs.appendChild(d); window._installLogEl=b.querySelector('div'); scrollBot(); }
+      {const d=document.createElement('div');d.className='message assistant';const b=document.createElement('div');b.className='bubble';b.innerHTML='<div style="font-family:monospace;font-size:11px;white-space:pre-wrap;">Pulling '+esc(m.model)+'\u2026<\/div>';d.appendChild(b);msgs.appendChild(d);window._installLog=b.querySelector('div');scrollBot();}
       break;
     case 'installProgress':
-      if(window._installLogEl) { window._installLogEl.textContent+=(window._installLogEl.textContent?'\n':'')+m.line; scrollBot(); }
+      if(window._installLog){window._installLog.textContent+=(window._installLog.textContent?'\n':'')+m.line;scrollBot();}
       break;
     case 'installDone':
-      if(window._installLogEl) {
-        window._installLogEl.textContent+='\n'+(m.success?'✓ Done. Switched to '+m.model+'.':'✗ Failed. '+(m.error||''));
-        window._installLogEl=null;
-      }
+      if(window._installLog){window._installLog.textContent+='\n'+(m.success?'\u2713 Done. Switched to '+m.model+'.':'\u2717 Failed. '+(m.error||''));window._installLog=null;}
       break;
   }
 });
 
 function renderModels(models,current){
   modelSel.innerHTML='';
-  if(!models.length){const o=document.createElement('option');o.textContent='No models (start Ollama or add API)';o.value='';modelSel.appendChild(o);modelSel.title='Install Ollama and pull a model, or set an API provider in Settings';return;}
+  if(!models||!models.length){
+    const o=document.createElement('option');
+    o.textContent='No models \u2014 start Ollama or add API key';
+    o.value='';modelSel.appendChild(o);
+    modelSel.title='Run: ollama serve  then: ollama pull llama3.2';
+    return;
+  }
   models.forEach(m=>{
     const o=document.createElement('option');
     o.value=m.name;
-    const sizeStr=m.size!=null?(m.size/1e9).toFixed(1)+'GB':'';
-    o.textContent=m.name+(sizeStr?' ('+sizeStr+')':'');
+    const sz=m.size!=null?(m.size/1e9).toFixed(1)+'B':'';
+    o.textContent=m.name+(sz?' ('+sz+')':'');
     if(m.name===current)o.selected=true;
     modelSel.appendChild(o);
   });
+  if(current){ctxLimit=getCtxLimit(current);updateCtx();}
 }
+
+updateCtx();
 </script>
 </body>
 </html>`;
