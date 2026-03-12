@@ -13,6 +13,7 @@ import { OllamaDiagnosticActionProvider } from './diagnostics/diagnosticActionPr
 import { DiagnosticStatusBar } from './diagnostics/diagnosticStatusBar';
 import { buildDiagnosticPrompt } from './diagnostics/diagnosticPromptBuilder';
 import { HistoryStore } from './history/historyStore';
+import { GitStatusBar } from './git/gitStatusBar';
 
 let statusBarItem: vscode.StatusBarItem;
 let chatProvider: ChatViewProvider;
@@ -90,7 +91,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         )
     );
     new DiagnosticStatusBar(context);
-
+    new GitStatusBar(context);
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ollamaCopilot.askGitStatus', async () => {
+            await chatProvider.sendQuickAction(
+                'Run git_status and git_log to summarise the current state of the repo. ' +
+                'List modified files and the last 5 commits. Be concise.'
+            );
+        })
+    );
     context.subscriptions.push(
         vscode.commands.registerCommand('ollamaCopilot.newSession', async () => {
             const name = await vscode.window.showInputBox({

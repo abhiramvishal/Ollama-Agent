@@ -7,6 +7,7 @@ import type { CodeChunk } from '../rag/codeChunker';
 import type { MemoryStore } from '../memory/memoryStore';
 import type { SkillStore } from '../memory/skillStore';
 import { computeDiff, type FileDiff } from '../diff/diffEngine';
+import { gitStatus, gitDiff, gitLog, gitCommit, gitBranch, gitCheckout } from '../git/gitClient';
 
 export interface ToolResult {
     success: boolean;
@@ -140,6 +141,48 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             content: { type: 'string', description: 'Full skill instructions/examples', required: true },
             tags: { type: 'string', description: 'Optional comma-separated tags', required: false }
         }
+    },
+    {
+        name: 'git_status',
+        description: 'Show the working tree status (modified, untracked, staged files)',
+        parameters: {}
+    },
+    {
+        name: 'git_diff',
+        description: 'Show unstaged or staged changes. Optionally for a specific file.',
+        parameters: {
+            staged: { type: 'boolean', description: 'Show staged changes (default: unstaged)' },
+            file: { type: 'string', description: 'Optional: specific file path to diff' }
+        }
+    },
+    {
+        name: 'git_log',
+        description: 'Show recent commit history (oneline format)',
+        parameters: {
+            count: { type: 'number', description: 'Number of commits to show (default 10, max 50)' }
+        }
+    },
+    {
+        name: 'git_commit',
+        description: 'Stage all changes and create a git commit',
+        parameters: {
+            message: { type: 'string', description: 'Commit message', required: true },
+            addAll: { type: 'boolean', description: 'Stage all changes before committing (git add -A)' }
+        }
+    },
+    {
+        name: 'git_branch',
+        description: 'List all branches, or create a new branch and switch to it',
+        parameters: {
+            create: { type: 'string', description: 'Name of new branch to create and switch to' }
+        }
+    },
+    {
+        name: 'git_checkout',
+        description: 'Switch to an existing branch',
+        parameters: {
+            branch: { type: 'string', description: 'Branch name to checkout', required: true }
+        }
     }
 ];
 
@@ -186,6 +229,21 @@ export class AgentTools {
                 case 'update_project_context': return await this.updateProjectContext(args.context);
                 case 'add_key_fact': return await this.addKeyFact(args.fact);
                 case 'add_skill': return await this.addSkill(args.name, args.description, args.content, args.tags);
+                case 'git_status':
+                    return { success: true, output: gitStatus() };
+                case 'git_diff':
+                    return { success: true, output: gitDiff({ staged: args.staged === 'true', file: args.file }) };
+                case 'git_log':
+                    return { success: true, output: gitLog({ count: args.count ? parseInt(args.count, 10) : 10 }) };
+                case 'git_commit': {
+                    const out = gitCommit({ message: args.message ?? '', addAll: args.addAll === 'true' });
+                    const failed = out.startsWith('Error:') || out.includes('nothing to commit');
+                    return { success: !failed, output: out, error: failed ? out : undefined };
+                }
+                case 'git_branch':
+                    return { success: true, output: gitBranch({ create: args.create }) };
+                case 'git_checkout':
+                    return { success: true, output: gitCheckout({ branch: args.branch ?? '' }) };
                 default: return { success: false, output: '', error: `Unknown tool: ${name}` };
             }
         } catch (err: any) {

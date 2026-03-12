@@ -130,6 +130,10 @@
         "command": "ollamaCopilot.exportSession",
         "title": "Ollama: Export Session to Markdown",
         "icon": "$(export)"
+      },
+      {
+        "command": "ollamaCopilot.askGitStatus",
+        "title": "Ollama: Summarise Git Status"
       }
     ],
     "viewsContainers": {
