@@ -68,6 +68,7 @@ export class AgentRunner {
     private client: OllamaClient;
     private _maxReflections: number;
     private _pendingDiffs = new Map<string, (approved: boolean) => void>();
+    private _stopRequested = false;
 
     constructor(client: OllamaClient, tools?: AgentTools, maxReflections?: number) {
         this.client = client;
@@ -81,6 +82,10 @@ export class AgentRunner {
 
     private async _deleteFile(path: string): Promise<void> {
         await this.tools.executeTool('delete_file', { path });
+    }
+
+    stop(): void {
+        this._stopRequested = true;
     }
 
     resolveDiff(stepId: string, approved: boolean): void {
@@ -104,6 +109,7 @@ export class AgentRunner {
     }
 
     async run(options: AgentRunOptions): Promise<void> {
+        this._stopRequested = false;
         const { messages, model, onStep, maxIterations = 15 } = options;
         const maxReflections = options.maxReflections ?? this._maxReflections;
         const diffPreviewEnabled = options.diffPreviewEnabled !== false;
@@ -114,6 +120,11 @@ export class AgentRunner {
         let iteration = 0;
 
         while (iteration < maxIterations) {
+            if (this._stopRequested) {
+                this._stopRequested = false;
+                onStep({ type: 'done', content: '[Stopped by user]' });
+                return;
+            }
             let fullResponse = '';
 
             onStep({ type: 'thinking', content: '' });

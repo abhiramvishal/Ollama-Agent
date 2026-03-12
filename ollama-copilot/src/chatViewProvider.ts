@@ -10,6 +10,7 @@ import type { SkillStore } from './memory/skillStore';
 import { formatDiffHtml } from './diff/diffEngine';
 import type { HistoryStore } from './history/historyStore';
 import type { ChatSession } from './history/historyStore';
+import { matchSlashCommand, SLASH_COMMANDS } from './slash/slashCommands';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'ollamaCopilot.chatView';
@@ -70,6 +71,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this._activeSessionId = session.id;
             this._sendHistoryToWebview(session);
         }
+        this._view?.webview.postMessage({
+            type: 'slashCommands',
+            commands: SLASH_COMMANDS.map(c => ({ name: c.name, usage: c.usage, description: c.description }))
+        });
     }
 
     public sendToChat(userMessage: string, codeContext?: string) {
@@ -158,6 +163,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             case 'rejectPlan':
                 this._pendingPlanMessages = null;
                 this._view?.webview.postMessage({ type: 'planRejected' });
+                break;
+            case 'stopAgent':
+                this._agentRunner.stop();
                 break;
             case 'cancelAgent':
                 this._isAgentRunning = false;
@@ -258,13 +266,93 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        let processedText = text;
+        const slashMatchNew = matchSlashCommand(text);
+        if (slashMatchNew) {
+            const { command, arg } = slashMatchNew;
+            switch (command.name) {
+                case 'help': {
+                    const helpText = '**Available slash commands:**\n\n' +
+                        SLASH_COMMANDS.map(c => `- \`${c.usage}\` — ${c.description}`).join('\n');
+                    this._view?.webview.postMessage({
+                        type: 'assistantMessage',
+                        html: renderMarkdownToHtml(helpText)
+                    });
+                    return;
+                }
+                case 'clear':
+                    if (this._historyStore && this._activeSessionId) {
+                        this._historyStore.clearMessages(this._activeSessionId);
+                    }
+                    this.clearWebviewMessages();
+                    return;
+                case 'new': {
+                    if (!this._historyStore) return;
+                    const session = this._historyStore.createSession(arg || undefined);
+                    this.switchSession(session);
+                    return;
+                }
+                case 'commit': {
+                    if (!arg.trim()) {
+                        this._view?.webview.postMessage({
+                            type: 'assistantMessage',
+                            html: renderMarkdownToHtml('Usage: `/commit <message>`')
+                        });
+                        return;
+                    }
+                    processedText = `Use git_commit with addAll=true and message="${arg.trim()}". Then confirm the commit was successful.`;
+                    break;
+                }
+                case 'search': {
+                    if (!arg.trim()) {
+                        this._view?.webview.postMessage({
+                            type: 'assistantMessage',
+                            html: renderMarkdownToHtml('Usage: `/search <query>`')
+                        });
+                        return;
+                    }
+                    processedText = `Search the workspace for: ${arg.trim()}. Use semantic_search to find relevant code and summarise the top results.`;
+                    break;
+                }
+                case 'explain':
+                    await vscode.commands.executeCommand('ollamaCopilot.explain');
+                    return;
+                case 'fix':
+                    await vscode.commands.executeCommand('ollamaCopilot.fix');
+                    return;
+                case 'tests':
+                    await vscode.commands.executeCommand('ollamaCopilot.add_tests');
+                    return;
+                case 'status':
+                    processedText = command.expandTo!;
+                    break;
+                case 'model': {
+                    if (!arg.trim()) {
+                        this._view?.webview.postMessage({
+                            type: 'assistantMessage',
+                            html: renderMarkdownToHtml('Usage: `/model <name>` — e.g. `/model codellama`')
+                        });
+                        return;
+                    }
+                    await vscode.workspace.getConfiguration('ollamaCopilot').update('model', arg.trim(), vscode.ConfigurationTarget.Global);
+                    this._view?.webview.postMessage({ type: 'setModel', model: arg.trim() });
+                    this._view?.webview.postMessage({
+                        type: 'assistantMessage',
+                        html: renderMarkdownToHtml(`Switched model to \`${arg.trim()}\`.`)
+                    });
+                    return;
+                }
+                default:
+                    break;
+            }
+        }
+
         const config = vscode.workspace.getConfiguration('ollamaCopilot');
         const model = config.get<string>('model', 'llama3');
         const systemPrompt = config.get<string>('systemPrompt', '');
 
         // Parse slash command and determine if we should use agent mode
-        const slashMatch = text.match(/^\/(\w+)\s*(.*)/s);
-        let processedText = text;
+        const slashMatch = !slashMatchNew ? text.match(/^\/(\w+)\s*(.*)/s) : null;
         const agentSlashCmds = ['plan', 'edit', 'fix', 'run', 'test', 'refactor', 'build', 'review', 'optimize', 'types'];
         let isAgentTask = agentModeOverride ?? config.get<boolean>('agentMode', true);
 
@@ -801,17 +889,19 @@ strong { font-weight: 700; } em { font-style: italic; }
     </div>
   </div>
 </div>
-<button class="stop-btn" id="stopBtn">■ Stop agent</button>
 <div style="position:relative">
   <div class="slash-popup" id="slashPopup"></div>
   <div class="file-popup" id="filePopup"></div>
 </div>
 <div class="hint">/ commands · @ attach files · Enter to send · Shift+Enter newline</div>
-<div class="input-area">
+<div class="input-area" style="position:relative">
+  <div id="slash-menu" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;z-index:100;max-height:220px;overflow-y:auto;box-shadow:0 -4px 12px rgba(0,0,0,0.3);"></div>
   <div class="input-row">
     <textarea id="input" placeholder="Ask anything... or type / for commands" rows="1"></textarea>
+    <button id="stopBtn" title="Stop" style="display:none;background:#f87171;color:#000;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;font-weight:600;flex-shrink:0;">&#9632; Stop</button>
     <button class="send-btn" id="sendBtn">➤</button>
   </div>
+  <div id="char-counter" style="font-size:10px;color:var(--vscode-descriptionForeground);text-align:right;padding:0 4px 2px;">0</div>
 </div>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -839,6 +929,8 @@ const msgs=$('messages'), input=$('input'), sendBtn=$('sendBtn'), stopBtn=$('sto
 const statusDot=$('statusDot'), modelSel=$('modelSelect'), modeBadge=$('modeBadge');
 const selBadge=$('selBadge'), slashPopup=$('slashPopup'), filePopup=$('filePopup');
 const emptyState=$('emptyState'), sessionNameEl=$('session-name');
+const charCounter=$('char-counter'), slashMenu=$('slash-menu');
+let allCommands = [];
 
 vscode.postMessage({type:'getConnectionStatus'});
 vscode.postMessage({type:'getModels'});
@@ -869,22 +961,34 @@ $('memorySaveBtn').onclick=()=>{
 $('newKeyFact').onkeydown=(e)=>{ if(e.key==='Enter'){ const v=$('newKeyFact').value.trim(); if(v){ (window._keyFacts=window._keyFacts||[]).push(v); $('newKeyFact').value=''; renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); } } };
 function renderKeyFacts(){ const el=$('keyFactsList'); if(!el)return; const facts=window._keyFacts||[]; el.innerHTML=facts.map((f,i)=>'<span class="key-fact-tag">'+esc(f)+' <button data-i="'+i+'" title="Remove">×</button></span>').join(''); el.querySelectorAll('button').forEach(btn=>{ btn.onclick=()=>{ const i=parseInt(btn.dataset.i,10); window._keyFacts=window._keyFacts||[]; window._keyFacts.splice(i,1); renderKeyFacts(); vscode.postMessage({type:'updateCore',patch:{keyFacts:window._keyFacts}}); }; }); }
 modelSel.onchange=()=>vscode.postMessage({type:'changeModel',model:modelSel.value});
-stopBtn.onclick=()=>{vscode.postMessage({type:'cancelAgent'});setRunning(false);};
+stopBtn.onclick=()=>{vscode.postMessage({type:'stopAgent'});stopBtn.disabled=true;stopBtn.textContent='Stopping…';};
 
 document.querySelectorAll('.quick-btn').forEach(b=>{
   b.onclick=()=>{ input.value=b.dataset.cmd; autoSz(); showSlash(b.dataset.cmd); input.focus(); };
 });
 
 input.addEventListener('input',()=>{
-  autoSz();
   const v=input.value, c=input.selectionStart;
+  if(charCounter) charCounter.textContent = v.length.toString();
+  if(v.startsWith('/')&&!v.includes(' ')&&allCommands.length){
+    const filtered=allCommands.filter(cmd=>cmd.name.startsWith(v.slice(1).toLowerCase()));
+    if(filtered.length&&slashMenu){
+      slashMenu.innerHTML=filtered.map((cmd,i)=>'<div class="slash-item" data-idx="'+i+'" data-usage="'+esc(cmd.usage)+'" style="padding:6px 12px;cursor:pointer;display:flex;gap:8px;align-items:baseline;"><span style="color:#a78bfa;font-weight:600;font-size:12px">'+esc('/'+cmd.name)+'</span><span style="color:var(--vscode-descriptionForeground);font-size:11px">'+esc(cmd.description)+'</span></div>').join('');
+      slashMenu.style.display='block';
+      slashMenu.querySelectorAll('.slash-item').forEach(el=>{
+        el.addEventListener('mousedown',(e)=>{ e.preventDefault(); const usage=el.getAttribute('data-usage')||''; input.value=usage.replace(/<[^>]*>/g,' ').trim()+(usage.includes('<')?' ':''); slashMenu.style.display='none'; input.focus(); if(charCounter) charCounter.textContent=input.value.length.toString(); });
+      });
+    } else if(slashMenu) slashMenu.style.display='none';
+  } else if(slashMenu) slashMenu.style.display='none';
+  autoSz();
   const sm=v.match(/^\\/(\\w*)$/);
-  if(sm){ const p=sm[1].toLowerCase(); const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p)); if(f.length){renderSlash(f);return;} }
+  if(sm&&!allCommands.length){ const p=sm[1].toLowerCase(); const f=SLASH.filter(s=>s.cmd.slice(1).startsWith(p)); if(f.length){renderSlash(f);return;} }
   hideSlash();
   const am=v.slice(0,c).match(/@([^\\s]*)$/);
   if(am){ vscode.postMessage({type:'getWorkspaceFiles',query:am[1]}); return; }
   hideFile();
 });
+input.addEventListener('blur',()=>setTimeout(()=>{ if(slashMenu) slashMenu.style.display='none'; },150));
 
 input.addEventListener('keydown',e=>{
   if(slashPopup.classList.contains('visible')){
@@ -956,6 +1060,11 @@ function setRunning(r){
   isRunning=r; sendBtn.disabled=r;
   stopBtn.classList.toggle('visible',r);
 }
+function agentEnd(){
+  setRunning(false);
+  stopBtn.style.display='none'; sendBtn.style.display='inline-block';
+  stopBtn.disabled=false; stopBtn.textContent='\u25A0 Stop';
+}
 
 function hideEmpty(){emptyState.style.display='none';}
 function scrollBot(){msgs.scrollTop=msgs.scrollHeight;}
@@ -1001,6 +1110,7 @@ function attachActions(el){
 
 function agentStart(){
   setRunning(true); hideEmpty();
+  stopBtn.style.display='inline-block'; sendBtn.style.display='none';
   const d=document.createElement('div'); d.className='message assistant';
   const b=document.createElement('div'); b.className='bubble';
   d.appendChild(b); msgs.appendChild(d); currentBubble=b;
@@ -1075,7 +1185,7 @@ window.addEventListener('message',e=>{
     case 'userMessage': addUser(m.text); startAssistant(); setRunning(true); break;
     case 'startAssistantMessage': startAssistant(); setRunning(true); break;
     case 'streamChunk': streamChunk(m.chunk); break;
-    case 'finalizeAssistantMessage': finalize(m.html); setRunning(false); break;
+    case 'finalizeAssistantMessage': finalize(m.html); agentEnd(); break;
     case 'agentStart': agentStart(); break;
     case 'agentThinking': break;
     case 'agentToolCall': addToolCall(m.toolName,m.toolArgs,m.step); break;
@@ -1093,9 +1203,9 @@ window.addEventListener('message',e=>{
         er.style.cssText='color:#f44336;font-size:12px;margin-top:6px;';
         er.textContent='⚠ '+m.error; currentBubble.appendChild(er);
       }
-      currentBubble=null; setRunning(false); scrollBot(); break;
+      currentBubble=null; agentEnd(); scrollBot(); break;
     case 'planExecuting': startAssistant(); setRunning(true); break;
-    case 'planRejected': setRunning(false); break;
+    case 'planRejected': agentEnd(); break;
     case 'models': renderModels(m.models,m.current); break;
     case 'connectionStatus': statusDot.classList.toggle('connected',m.connected); break;
     case 'indexStatus':
@@ -1145,7 +1255,16 @@ window.addEventListener('message',e=>{
     case 'clearMessages': msgs.innerHTML=''; msgs.appendChild(emptyState); emptyState.style.display='flex'; break;
     case 'error':
       if(currentBubble){currentBubble.innerHTML='<span style="color:#f44336">⚠ '+esc(m.message||'Error')+'</span>';currentBubble=null;}
-      setRunning(false); break;
+      agentEnd(); break;
+    case 'slashCommands': allCommands=m.commands||[]; break;
+    case 'assistantMessage':
+      hideEmpty();
+      const ad=document.createElement('div'); ad.className='message assistant';
+      const ab=document.createElement('div'); ab.className='bubble';
+      ab.innerHTML=m.html||esc(m.text||'');
+      ad.appendChild(ab); msgs.appendChild(ad); attachActions(ab); scrollBot();
+      break;
+    case 'setModel': if(modelSel&&m.model){ modelSel.value=m.model; vscode.postMessage({type:'changeModel',model:m.model}); } break;
   }
 });
 
