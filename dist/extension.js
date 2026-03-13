@@ -2534,22 +2534,10 @@ var ChatViewProvider = class _ChatViewProvider {
         this._sendIndexStatus();
       }
     });
-    setTimeout(() => {
-      this._log.appendLine("setTimeout fired, view=" + (this._view ? "exists" : "null"));
-      this._refreshModels();
-      this._checkConnection();
-      this._sendIndexStatus();
-      this._sendMemoryData();
-    }, 500);
     if (this._historyStore) {
       const session = this._historyStore.getOrCreateActiveSession();
       this._activeSessionId = session.id;
-      this._sendHistoryToWebview(session);
     }
-    this._view?.webview.postMessage({
-      type: "slashCommands",
-      commands: SLASH_COMMANDS.map((c) => ({ name: c.name, usage: c.usage, description: c.description }))
-    });
   }
   sendToChat(userMessage, codeContext) {
     if (!this._view) {
@@ -2619,6 +2607,20 @@ var ChatViewProvider = class _ChatViewProvider {
         break;
       case "insertCode":
         this._insertCodeToEditor(msg.code);
+        break;
+      case "ready":
+        await this._refreshModels();
+        await this._checkConnection();
+        this._sendIndexStatus();
+        await this._sendMemoryData();
+        if (this._historyStore && this._activeSessionId) {
+          const session = this._historyStore.loadSession(this._activeSessionId);
+          if (session) this._sendHistoryToWebview(session);
+        }
+        this._view?.webview.postMessage({
+          type: "slashCommands",
+          commands: SLASH_COMMANDS.map((c) => ({ name: c.name, usage: c.usage, description: c.description }))
+        });
         break;
       case "getModels":
         await this._refreshModels();
@@ -3539,10 +3541,6 @@ const emptyState=$('emptyState'), emptyNoSetup=$('emptyStateNoSetup'), sessionNa
 const charCt=$('charCt'), cmdMenu=$('cmdMenu'), mentionPop=$('mentionPop');
 
 /* init */
-vscode.postMessage({type:'getConnectionStatus'});
-vscode.postMessage({type:'getModels'});
-vscode.postMessage({type:'getIndexStatus'});
-vscode.postMessage({type:'getMemory'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 /* \u2500\u2500 Mode toggle \u2500\u2500 */
@@ -3957,6 +3955,7 @@ window.addEventListener('message',e=>{
       break;
   }
 });
+vscode.postMessage({type:'ready'});
 
 function renderModels(models,current){
   modelSel.innerHTML='';
