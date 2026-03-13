@@ -148,7 +148,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _handleMessage(msg: any) {
         switch (msg.type) {
             case 'sendMessage':
-                await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
+                try {
+                    await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
+                } catch (err: unknown) {
+                    this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+                }
                 break;
             case 'changeModel':
                 vscode.workspace.getConfiguration('clawpilot').update('model', msg.model, true);
@@ -410,7 +414,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        processedText = await this._resolveMentionsInMessage(processedText);
+        try { processedText = await this._resolveMentionsInMessage(processedText); } catch { /* skip unresolvable mentions */ }
 
         let fullMessage = processedText;
         const contextTypes: string[] = [];
@@ -943,6 +947,7 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
 <div class="topbar">
   <span class="status-dot" id="statusDot"></span>
   <button class="provider-btn" id="providerBadge" title="Change provider">ClawPilot</button>
+  <span style="font-size:9px;opacity:.45;flex-shrink:0">v2</span>
   <button class="icon-btn" id="setupBtn" title="Settings">&#9881;</button>
   <button class="icon-btn" id="newSessionBtn" title="New chat">&#43;</button>
 </div>
@@ -998,21 +1003,18 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
     </div>
   </div>
 </div>
-<!-- Popups (above input) -->
-<div class="input-wrap">
-  <div class="popup" id="slashPop"></div>
-  <div class="popup" id="filePop"></div>
-  <div class="popup" id="cmdMenu"></div>
-  <div class="mention-pop" id="mentionPop"></div>
-</div>
 <!-- Context usage bar -->
 <div class="ctx-bar">
   <div class="ctx-track"><div class="ctx-fill" id="ctxFill"></div></div>
   <span class="ctx-label" id="ctxLabel">0 tokens</span>
   <span class="sel-pill" id="selBadge">&#128206; <span id="selLabel">selection</span></span>
 </div>
-<!-- Input -->
-<div class="input-area">
+<!-- Input + Popups (popups positioned relative to input-area) -->
+<div class="input-area" style="position:relative">
+  <div class="popup" id="slashPop"></div>
+  <div class="popup" id="filePop"></div>
+  <div class="popup" id="cmdMenu"></div>
+  <div class="mention-pop" id="mentionPop"></div>
   <div class="input-box">
     <textarea id="msgInput" placeholder="Ask anything...  / commands  @ files" rows="1"></textarea>
     <button class="stop-btn" id="stopBtn" title="Stop generation">&#9632; Stop</button>
@@ -1235,6 +1237,10 @@ function send(){
   attachedFiles=[];inp.value='';autoSz();
   closeSlash();closeFile();
   convTokens+=countTok(text);updateCtx();
+  // Show user message immediately (don't wait for extension echo)
+  addUser(text,[]);
+  startAssistant();
+  setRunning(true);
   vscode.postMessage({type:'sendMessage',text,codeContext:code,files,agentMode});
 }
 sendBtn.onclick=send;
@@ -1360,7 +1366,7 @@ function showPlan(html){
 window.addEventListener('message',e=>{
   const m=e.data;
   switch(m.type){
-    case 'userMessage': addUser(m.text,m.contextTypes);startAssistant();setRunning(true);break;
+    case 'userMessage': break; // already shown optimistically in send()
     case 'startAssistantMessage': startAssistant();setRunning(true);break;
     case 'streamChunk': streamChunk(m.chunk);break;
     case 'finalizeAssistantMessage': finalize(m.html);agentEnd();break;
