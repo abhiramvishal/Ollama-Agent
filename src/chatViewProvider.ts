@@ -943,6 +943,7 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
 </style>
 </head>
 <body>
+<div id="dbg" style="position:fixed;top:0;left:0;right:0;background:#ff0;color:#000;font-size:10px;padding:2px 4px;z-index:9999;word-break:break-all;">waiting...</div>
 <!-- Top bar -->
 <div class="topbar">
   <span class="status-dot" id="statusDot"></span>
@@ -1231,6 +1232,8 @@ function closeFile(){filePop.classList.remove('open');fileIdx=-1;}
 function hlFile(){filePop.querySelectorAll('.file-item').forEach((el,i)=>el.classList.toggle('hi',i===fileIdx));}
 
 function send(){
+  const dbg=document.getElementById('dbg');
+  if(dbg) dbg.textContent='send() called, running='+running+', text='+(inp.value||'').slice(0,20);
   const text=inp.value.trim();
   if(!text||running)return;
   const code=selText||'',files=[...attachedFiles];
@@ -1364,6 +1367,13 @@ function showPlan(html){
 
 /* ── Message handler ── */
 window.addEventListener('message',e=>{
+  const dbg=document.getElementById('dbg');
+  try{
+    if(dbg){
+      const data=e.data??{};
+      dbg.textContent='msg: '+(data.type||'unknown')+' | '+JSON.stringify(data).slice(0,80);
+    }
+  }catch{}
   const m=e.data;
   switch(m.type){
     case 'userMessage': break; // already shown optimistically in send()
