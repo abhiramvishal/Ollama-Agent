@@ -157,18 +157,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 this._insertCodeToEditor(msg.code);
                 break;
             case 'ready':
-                await this._refreshModels();
-                await this._checkConnection();
-                this._sendIndexStatus();
-                await this._sendMemoryData();
-                if (this._historyStore && this._activeSessionId) {
-                    const session = this._historyStore.loadSession(this._activeSessionId);
-                    if (session) this._sendHistoryToWebview(session);
+                try {
+                    await this._refreshModels();
+                    await this._checkConnection();
+                    try { this._sendIndexStatus(); } catch { /* non-critical */ }
+                    try { await this._sendMemoryData(); } catch { /* non-critical */ }
+                    if (this._historyStore && this._activeSessionId) {
+                        const session = this._historyStore.loadSession(this._activeSessionId);
+                        if (session) this._sendHistoryToWebview(session);
+                    }
+                    this._view?.webview.postMessage({
+                        type: 'slashCommands',
+                        commands: SLASH_COMMANDS.map(c => ({ name: c.name, usage: c.usage, description: c.description }))
+                    });
+                } catch (e: unknown) {
+                    this._log?.appendLine('ready handler error: ' + (e instanceof Error ? e.message : String(e)));
                 }
-                this._view?.webview.postMessage({
-                    type: 'slashCommands',
-                    commands: SLASH_COMMANDS.map(c => ({ name: c.name, usage: c.usage, description: c.description }))
-                });
                 break;
             case 'getModels':
                 await this._refreshModels();
@@ -1255,12 +1259,10 @@ function send(){
   addUser(text, []);
   startAssistant();
   setRunning(true);
-  vscode.postMessage({ type: 'sendMessage', text, codeContext: selText || '', files: [...attachedFiles], agentMode: false });
+  vscode.postMessage({ type: 'sendMessage', text, codeContext: selText || '', files: [...attachedFiles], agentMode });
   attachedFiles = [];
 }
 sendBtn.onclick = send;
-sendBtn.addEventListener('click', send);
-sendBtn.setAttribute('onclick', '');
 
 function setRunning(r){
   running=r;
