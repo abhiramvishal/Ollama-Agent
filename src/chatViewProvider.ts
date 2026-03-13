@@ -405,7 +405,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Parse slash command and determine if we should use agent mode
         const slashMatch = !slashMatchNew ? text.match(/^\/(\w+)\s*(.*)/s) : null;
         const agentSlashCmds = ['plan', 'edit', 'fix', 'run', 'test', 'refactor', 'build', 'review', 'optimize', 'types'];
-        let isAgentTask = agentModeOverride ?? config.get<boolean>('agentMode', true);
+        let isAgentTask = agentModeOverride ?? false;
 
         if (slashMatch) {
             processedText = this._expandSlashCommand(slashMatch[1], slashMatch[2], codeContext);
@@ -1024,8 +1024,14 @@ strong{font-weight:700}em{font-style:italic}a{color:var(--vscode-textLink-foregr
   <div class="char-ct" id="charCt">0</div>
 </div>
 <script nonce="${nonce}">
+window.onerror = function(msg, src, line, col, err) {
+  document.body.insertAdjacentHTML('afterbegin',
+    '<div style="position:fixed;top:0;left:0;right:0;background:red;color:white;font-size:11px;padding:4px;z-index:9999">'
+    + 'JS ERROR line ' + line + ': ' + msg + '</div>');
+  return false;
+};
 const vscode = acquireVsCodeApi();
-let agentMode=true, running=false, selText='', selLang='';
+let agentMode=false, running=false, selText='', selLang='';
 let curBubble=null, curSteps=null, attachedFiles=[];
 let slashIdx=-1, fileIdx=-1;
 let convTokens=0, ctxLimit=32768;
@@ -1203,6 +1209,9 @@ inp.addEventListener('keydown',e=>{
   }
   if(enter){e.preventDefault();e.stopPropagation();send();}
 },{capture:true});
+inp.onkeydown = function(e) {
+  if ((e.key === 'Enter') && !e.shiftKey) { e.preventDefault(); send(); }
+};
 
 function autoSz(){inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,160)+'px';}
 
@@ -1232,21 +1241,20 @@ function closeFile(){filePop.classList.remove('open');fileIdx=-1;}
 function hlFile(){filePop.querySelectorAll('.file-item').forEach((el,i)=>el.classList.toggle('hi',i===fileIdx));}
 
 function send(){
-  const dbg=document.getElementById('dbg');
-  if(dbg) dbg.textContent='send() called, running='+running+', text='+(inp.value||'').slice(0,20);
-  const text=inp.value.trim();
-  if(!text||running)return;
-  const code=selText||'',files=[...attachedFiles];
-  attachedFiles=[];inp.value='';autoSz();
-  closeSlash();closeFile();
-  convTokens+=countTok(text);updateCtx();
-  // Show user message immediately (don't wait for extension echo)
-  addUser(text,[]);
+  const text = inp.value.trim();
+  if (!text) return;
+  if (running) { inp.value = ''; return; }
+  inp.value = ''; autoSz();
+  // Show message immediately in chat without waiting for extension
+  addUser(text, []);
   startAssistant();
   setRunning(true);
-  vscode.postMessage({type:'sendMessage',text,codeContext:code,files,agentMode});
+  vscode.postMessage({ type: 'sendMessage', text, codeContext: selText || '', files: [...attachedFiles], agentMode: false });
+  attachedFiles = [];
 }
-sendBtn.onclick=send;
+sendBtn.onclick = send;
+sendBtn.addEventListener('click', send);
+sendBtn.setAttribute('onclick', '');
 
 function setRunning(r){
   running=r;
