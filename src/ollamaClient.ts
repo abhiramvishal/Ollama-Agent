@@ -117,15 +117,14 @@ export class OllamaClient implements LLMProvider {
     this.refreshConfig();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    let res: Response;
     try {
-      res = await fetch(`${this.endpoint}/api/tags`, { signal: controller.signal });
+      const res = await fetch(`${this.endpoint}/api/tags`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
+      const data = await res.json() as { models?: OllamaModel[] };
+      return data.models ?? [];
     } finally {
       clearTimeout(timeout);
     }
-    if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
-    const data = await res.json() as { models?: OllamaModel[] };
-    return data.models ?? [];
   }
 
   /**
