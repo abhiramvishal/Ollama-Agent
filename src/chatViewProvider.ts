@@ -148,7 +148,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _handleMessage(msg: any) {
         switch (msg.type) {
             case 'sendMessage':
-                await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
+                try {
+                    await this._handleUserMessage(msg.text, msg.codeContext, msg.files, msg.agentMode);
+                } catch (err: unknown) {
+                    this._view?.webview.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+                }
                 break;
             case 'changeModel':
                 vscode.workspace.getConfiguration('clawpilot').update('model', msg.model, true);
@@ -410,7 +414,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        processedText = await this._resolveMentionsInMessage(processedText);
+        try { processedText = await this._resolveMentionsInMessage(processedText); } catch { /* skip unresolvable mentions */ }
 
         let fullMessage = processedText;
         const contextTypes: string[] = [];
@@ -1233,6 +1237,10 @@ function send(){
   attachedFiles=[];inp.value='';autoSz();
   closeSlash();closeFile();
   convTokens+=countTok(text);updateCtx();
+  // Show user message immediately (don't wait for extension echo)
+  addUser(text,[]);
+  startAssistant();
+  setRunning(true);
   vscode.postMessage({type:'sendMessage',text,codeContext:code,files,agentMode});
 }
 sendBtn.onclick=send;
@@ -1358,7 +1366,7 @@ function showPlan(html){
 window.addEventListener('message',e=>{
   const m=e.data;
   switch(m.type){
-    case 'userMessage': addUser(m.text,m.contextTypes);startAssistant();setRunning(true);break;
+    case 'userMessage': break; // already shown optimistically in send()
     case 'startAssistantMessage': startAssistant();setRunning(true);break;
     case 'streamChunk': streamChunk(m.chunk);break;
     case 'finalizeAssistantMessage': finalize(m.html);agentEnd();break;
