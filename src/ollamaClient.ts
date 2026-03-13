@@ -115,11 +115,16 @@ export class OllamaClient implements LLMProvider {
 
   async listModels(): Promise<OllamaModel[]> {
     this.refreshConfig();
-    const res = await fetch(`${this.endpoint}/api/tags`);
-    if (!res.ok) {
-      throw new Error(`Ollama API error: ${res.status} ${res.statusText}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let res: Response;
+    try {
+      res = await fetch(`${this.endpoint}/api/tags`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
     }
-    const data = (await res.json()) as TagsResponse;
+    if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
+    const data = await res.json() as { models?: OllamaModel[] };
     return data.models ?? [];
   }
 
@@ -171,11 +176,19 @@ export class OllamaClient implements LLMProvider {
       stream: true,
       options: { num_predict: tokens },
     };
-    const res = await fetch(`${this.endpoint}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    let res: Response;
+    try {
+      res = await fetch(`${this.endpoint}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Ollama chat error: ${res.status} ${text}`);
