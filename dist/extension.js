@@ -324,15 +324,14 @@ var OllamaClient = class _OllamaClient {
     this.refreshConfig();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5e3);
-    let res;
     try {
-      res = await fetch(`${this.endpoint}/api/tags`, { signal: controller.signal });
+      const res = await fetch(`${this.endpoint}/api/tags`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
+      const data = await res.json();
+      return data.models ?? [];
     } finally {
       clearTimeout(timeout);
     }
-    if (!res.ok) throw new Error(`Ollama API error: ${res.status}`);
-    const data = await res.json();
-    return data.models ?? [];
   }
   /**
    * Returns the best available model given a preferred name.
@@ -2501,6 +2500,7 @@ var ChatViewProvider = class _ChatViewProvider {
     this._isAgentRunning = false;
     this._pendingPlanMessages = null;
     this._activeSessionId = null;
+    this._log = vscode10.window.createOutputChannel("ClawPilot Debug");
     this._client = client2;
     this._workspaceIndex = workspaceIndex2;
     this._memoryStore = memoryStore2;
@@ -2518,6 +2518,8 @@ var ChatViewProvider = class _ChatViewProvider {
   }
   resolveWebviewView(webviewView, _context, _token) {
     this._view = webviewView;
+    this._log.appendLine("resolveWebviewView called, visible=" + webviewView.visible);
+    this._log.show(true);
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this._extensionUri]
@@ -2533,6 +2535,7 @@ var ChatViewProvider = class _ChatViewProvider {
       }
     });
     setTimeout(() => {
+      this._log.appendLine("setTimeout fired, view=" + (this._view ? "exists" : "null"));
       this._refreshModels();
       this._checkConnection();
       this._sendIndexStatus();
@@ -3125,10 +3128,13 @@ Output the plan inside a <plan>...</plan> block.`;
   }
   async _refreshModels() {
     try {
+      this._log.appendLine("_refreshModels: calling listModels...");
       const models = await this._client.listModels();
+      this._log.appendLine("_refreshModels: got " + models.length + " models, posting...");
       const config = vscode10.workspace.getConfiguration("clawpilot");
       const current = config.get("model", "llama3");
       this._view?.webview.postMessage({ type: "models", models, current });
+      this._log.appendLine("_refreshModels: posted models message");
       const ok = await this._client.isAvailable();
       this._view?.webview.postMessage({
         type: "providerModelStatus",
@@ -3136,7 +3142,8 @@ Output the plan inside a <plan>...</plan> block.`;
         model: current || "",
         connected: ok
       });
-    } catch {
+    } catch (e) {
+      this._log.appendLine("_refreshModels CATCH: " + (e instanceof Error ? e.message : String(e)));
       this._view?.webview.postMessage({ type: "models", models: [], current: "" });
       this._view?.webview.postMessage({
         type: "providerModelStatus",

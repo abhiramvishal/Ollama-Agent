@@ -29,6 +29,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _historyStore: HistoryStore | undefined;
     private _activeSessionId: string | null = null;
     private _contextRegistry: ContextRegistry | undefined;
+    private _log = vscode.window.createOutputChannel('ClawPilot Debug');
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -57,6 +58,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken
     ) {
         this._view = webviewView;
+        this._log.appendLine('resolveWebviewView called, visible=' + webviewView.visible);
+        this._log.show(true);
         webviewView.webview.options = {
             enableScripts: true,
             localResourceRoots: [this._extensionUri]
@@ -71,21 +74,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 this._sendIndexStatus();
             }
         });
-        setTimeout(() => {
-            this._refreshModels();
-            this._checkConnection();
-            this._sendIndexStatus();
-            this._sendMemoryData();
-        }, 500);
         if (this._historyStore) {
             const session = this._historyStore.getOrCreateActiveSession();
             this._activeSessionId = session.id;
-            this._sendHistoryToWebview(session);
         }
-        this._view?.webview.postMessage({
-            type: 'slashCommands',
-            commands: SLASH_COMMANDS.map(c => ({ name: c.name, usage: c.usage, description: c.description }))
-        });
     }
 
     public sendToChat(userMessage: string, codeContext?: string) {
@@ -163,6 +155,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 break;
             case 'insertCode':
                 this._insertCodeToEditor(msg.code);
+                break;
+            case 'ready':
+                await this._refreshModels();
+                await this._checkConnection();
+                this._sendIndexStatus();
+                await this._sendMemoryData();
+                if (this._historyStore && this._activeSessionId) {
+                    const session = this._historyStore.loadSession(this._activeSessionId);
+                    if (session) this._sendHistoryToWebview(session);
+                }
+                this._view?.webview.postMessage({
+                    type: 'slashCommands',
+                    commands: SLASH_COMMANDS.map(c => ({ name: c.name, usage: c.usage, description: c.description }))
+                });
                 break;
             case 'getModels':
                 await this._refreshModels();
@@ -676,10 +682,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     private async _refreshModels() {
         try {
+            this._log.appendLine('_refreshModels: calling listModels...');
             const models = await this._client.listModels();
+            this._log.appendLine('_refreshModels: got ' + models.length + ' models, posting...');
             const config = vscode.workspace.getConfiguration('clawpilot');
             const current = config.get<string>('model', 'llama3');
             this._view?.webview.postMessage({ type: 'models', models, current });
+            this._log.appendLine('_refreshModels: posted models message');
             const ok = await this._client.isAvailable();
             this._view?.webview.postMessage({
                 type: 'providerModelStatus',
@@ -687,7 +696,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 model: current || '',
                 connected: ok,
             });
-        } catch {
+        } catch (e) {
+            this._log.appendLine('_refreshModels CATCH: ' + (e instanceof Error ? e.message : String(e)));
             this._view?.webview.postMessage({ type: 'models', models: [], current: '' });
             this._view?.webview.postMessage({
                 type: 'providerModelStatus',
@@ -1087,10 +1097,7 @@ const emptyState=$('emptyState'), emptyNoSetup=$('emptyStateNoSetup'), sessionNa
 const charCt=$('charCt'), cmdMenu=$('cmdMenu'), mentionPop=$('mentionPop');
 
 /* init */
-vscode.postMessage({type:'getConnectionStatus'});
-vscode.postMessage({type:'getModels'});
-vscode.postMessage({type:'getIndexStatus'});
-vscode.postMessage({type:'getMemory'});
+vscode.postMessage({type:'ready'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 /* ── Mode toggle ── */
