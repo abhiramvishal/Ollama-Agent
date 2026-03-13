@@ -1097,7 +1097,6 @@ const emptyState=$('emptyState'), emptyNoSetup=$('emptyStateNoSetup'), sessionNa
 const charCt=$('charCt'), cmdMenu=$('cmdMenu'), mentionPop=$('mentionPop');
 
 /* init */
-vscode.postMessage({type:'ready'});
 setInterval(()=>vscode.postMessage({type:'getSelectionContext'}),1500);
 
 /* ── Mode toggle ── */
@@ -1509,6 +1508,7 @@ window.addEventListener('message',e=>{
       break;
   }
 });
+vscode.postMessage({type:'ready'});
 
 function renderModels(models,current){
   modelSel.innerHTML='';
